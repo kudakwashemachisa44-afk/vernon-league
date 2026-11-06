@@ -225,6 +225,10 @@ td.pts{font:700 17px var(--display)}
 .modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.7);display:grid;place-items:center;padding:16px}
 .modal-in{background:var(--surface);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;max-width:420px;width:100%}
 .modal-in img{border-radius:8px;width:100%}
+button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inherit}
+.ph,.viewer img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.viewer .modal-in{max-width:760px}
+.viewer img{max-height:72vh;object-fit:contain;background:#000}
 /* gallery */
 .gal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ph{aspect-ratio:4/3;max-width:100%;border-radius:12px;position:relative;overflow:hidden;color:#fff;text-decoration:none;display:flex;align-items:flex-end}
@@ -311,6 +315,7 @@ td.pts{font:700 17px var(--display)}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
+<script>document.addEventListener('contextmenu', e => { if (e.target.closest('.ph, .viewer')) e.preventDefault(); });</script>
 <script src="app.js"></script>
 </body>
 </html>

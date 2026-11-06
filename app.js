@@ -24,7 +24,7 @@ async function load() {
     sb.from('public_players').select('*').in('team_id', TIDS).eq('active', true).order('sort'),
     fids.length ? sb.from('goals').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('sponsors').select('*').eq('season_id', SEASON.id).order('sort'),
-    fids.length ? sb.from('media').select('*').in('fixture_id', fids).order('created_at', {ascending:false}) : {data:[]},
+    sb.from('media').select('*').order('created_at', {ascending:false}).limit(300),
     fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]}
   ]);
   P = {}; SQUAD = {}; TIDS.forEach(id => SQUAD[id] = []);
@@ -245,6 +245,7 @@ V.team = slug => {
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
   <section class="sec"><div class="sec-head"><h2>Next matches</h2><button class="btn ghost sm" data-act="ics" data-v="${id}">📅 Add to calendar</button></div>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
+  ${teamMedia(id).length ? `<section class="sec"><div class="sec-head"><h2>Photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${teamMedia(id).slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><h2>Results</h2>${res.length ? `<div class="fxlist">${res.map(f => fxRow(f)).join('')}</div>` : empty('No results yet.')}</section>`;
 };
 V.match = code => {
@@ -266,12 +267,30 @@ V.match = code => {
     return hh.length ? `<section class="sec"><h2>Head-to-head this season</h2><div class="fxlist">${hh.map(x => fxRow(x)).join('')}</div></section>` : ''; })()}
   ${ph.length ? `<section class="sec"><h2>Photos & highlights</h2><div class="gal">${ph.map(mediaTile).join('')}</div></section>` : ''}`;
 };
-const mLabel = x => { const f = FX.find(y => y.id === x.fixture_id); return f ? `${T[f.home].short} ${f.status === 'final' ? f.hs + '–' + f.as : 'v'} ${T[f.away].short} · ${fmtDay(f.date)}` : ''; };
+const IG = 'https://instagram.com/kbmedia.ca';
+const mLabel = x => { const f = FX.find(y => y.id === x.fixture_id); if (f) return `${T[f.home].short} ${f.status === 'final' ? f.hs + '–' + f.as : 'v'} ${T[f.away].short} · ${fmtDay(f.date)}`; return x.team_id && T[x.team_id] ? T[x.team_id].name : ''; };
 const mediaTile = x => x.kind === 'photo'
-  ? `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:#1a2822 url('${esc(x.url)}') center/cover"><span>${esc(x.caption || '')}<small>${mLabel(x)}</small></span></a>`
-  : `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#17734a,#13201a)"><span>▶ Highlights<small>${esc(x.caption || mLabel(x))}</small></span></a>`;
-V.gallery = () => `<section class="sec"><h1>Gallery</h1><p class="muted">Selected photos and highlights by KB Media, posted when available and always with player consent.</p>
-  ${MEDIA.length ? `<div class="gal">${MEDIA.slice(0, 24).map(mediaTile).join('')}</div>` : empty('No photos yet. Check back during the season.')}</section>`;
+  ? `<button class="ph" data-act="view" data-v="${x.id}" style="background:#1a2822 url('${esc(x.url)}') center/cover" aria-label="Open photo"><span>${esc(x.caption || '')}<small>${mLabel(x)}</small></span></button>`
+  : `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#17734a,#13201a)"><span>▶ Highlights<small>${esc(x.caption || mLabel(x) || 'Watch on Instagram')}</small></span></a>`;
+const teamMedia = id => MEDIA.filter(x => x.team_id === id || FX.some(f => f.id === x.fixture_id && (f.home === id || f.away === id)));
+function viewPhoto(id) {
+  const x = MEDIA.find(m => m.id === id); if (!x) return;
+  const m = document.createElement('div'); m.className = 'modal viewer';
+  m.innerHTML = `<div class="modal-in"><img src="${esc(x.url)}" alt="${esc(x.caption || 'Match photo')}" draggable="false">
+    <p class="small">${esc(x.caption || '')} <span class="muted">${mLabel(x)}</span></p>
+    <div class="row"><a class="btn" href="${IG}" target="_blank" rel="noopener">More on Instagram</a><button class="btn ghost" data-close>Close</button></div></div>`;
+  m.addEventListener('click', e => { if (e.target === m || e.target.hasAttribute('data-close')) m.remove(); });
+  document.body.appendChild(m);
+}
+V.gallery = () => {
+  const hl = MEDIA.filter(x => x.kind === 'highlight'), ph = MEDIA.filter(x => x.kind === 'photo');
+  return `<section class="sec"><p class="k">KB Media · Sports photography</p><h1>Gallery</h1>
+  <p class="muted">Indoor league moments from KB Media. Tap a photo to see it bigger. For full-quality photos, team shoots or highlight reels, get in touch.</p>
+  <div class="row"><a class="btn" href="${IG}" target="_blank" rel="noopener">Follow on Instagram</a>${CFG.email ? `<span class="row" style="gap:8px"><span class="email">${esc(CFG.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(CFG.email)}">Copy email</button></span>` : ''}</div></section>
+  ${hl.length ? `<section class="sec"><h2>Highlights</h2><div class="gal">${hl.map(mediaTile).join('')}</div></section>` : ''}
+  <section class="sec"><h2>Photos</h2>${ph.length ? `<div class="gal">${ph.map(mediaTile).join('')}</div>` : empty('No photos yet. Check back during the season.')}
+  <p class="small muted">All photos © KB Media, posted with player consent. Want one taken down? Message KB Media.</p></section>`;
+};
 V.partners = () => `<section class="sec"><h1>Partners</h1>
   <p>Players and their friends check this site every week for scores and stats. Partner money keeps the site free for players.</p>
   ${SPONSORS.length ? `<div class="more">${SPONSORS.map(sponsorCard).join('')}</div>` : ''}
@@ -355,7 +374,9 @@ V.admin = () => {
     <button class="btn ghost sm" data-act="postpone" data-v="${f.id}">${f.status === 'postponed' ? 'Restore' : 'Postpone'}</button></div>`).join('') || '<p class="pad muted">None.</p>'}</div></section>
   <section class="sec"><h2>Photos & highlights</h2><p class="small muted">Only post photos of players who agreed. Big photos are shrunk before upload.</p>
     <div class="card pad" style="display:flex;flex-direction:column;gap:10px">
-      <label class="k" for="ph-fx">Match</label><select class="sel" id="ph-fx">${FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
+      <label class="k" for="ph-fx">Match</label><select class="sel" id="ph-fx"><option value="">No match (gallery only)</option>${FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
+      <label class="k" for="ph-team">Team in the photo</label><select class="sel" id="ph-team"><option value="">No team / several teams</option>${TIDS.map(t => `<option value="${t}">${tname(t)}</option>`).join('')}</select>
+      <label class="row small" style="gap:8px"><input type="checkbox" id="ph-wm" checked> Add a small "KB MEDIA" watermark</label>
       <label class="k" for="ph-files">Photos</label><input class="sel" id="ph-files" type="file" accept="image/*" multiple>
       <input class="sel" id="ph-cap" placeholder="Caption (optional)" maxlength="80">
       <button class="btn" data-act="upload">Upload photos</button>
@@ -454,10 +475,12 @@ async function admLoad() {
   }
   render(false);
 }
-async function shrink(file) {
+// Web-size copy (1600px long edge): sharp on phones, too small for print. Optional watermark.
+async function shrink(file, wm) {
   try { const img = await createImageBitmap(file); const k = Math.min(1, 1600 / Math.max(img.width, img.height));
     const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
+    if (wm) { const s = Math.round(c.width * .028); g.font = `700 ${s}px Figtree, system-ui, sans-serif`; g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,.7)'; g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = s * .4; g.fillText('KB MEDIA', c.width - s, c.height - s); }
     return await new Promise(r => c.toBlob(b => r(b || file), 'image/jpeg', .82)); } catch (e) { return file; }
 }
 async function refresh() { await load(); await admLoad(); }
@@ -479,6 +502,7 @@ function render(top) {
 async function act(a, v, el) {
   if (a === 'copy') { const no = () => toast('Press and hold to copy'); try { navigator.clipboard.writeText(v).then(() => toast('Copied'), no); } catch (e) { no(); } return; }
   if (a === 'follow') { MYTEAM = MYTEAM === v ? null : v; try { MYTEAM ? localStorage.setItem('myteam', v) : localStorage.removeItem('myteam'); } catch (e) {} toast(MYTEAM ? 'Saved as your team' : 'Removed'); render(false); return; }
+  if (a === 'view') { viewPhoto(v); return; }
   if (a === 'ics') { const t = T[v], p2 = n => String(n).padStart(2, '0'), u = d => `${d.getUTCFullYear()}${p2(d.getUTCMonth()+1)}${p2(d.getUTCDate())}T${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}00Z`, e = x => String(x).replace(/[\\,;]/g, m => '\\' + m);
     const ev = FX.filter(f => (f.home === v || f.away === v) && !played(f) && f.status !== 'postponed').map(f => ['BEGIN:VEVENT', `UID:${f.id}@vernon-league`, `DTSTAMP:${u(new Date())}`, `DTSTART:${u(f.date)}`, `DTEND:${u(new Date(f.date.getTime() + 80 * 6e4))}`, `SUMMARY:${e(T[f.home].name + ' v ' + T[f.away].name)}`, `LOCATION:${e(LEAGUE.venue || '')}`, 'BEGIN:VALARM', 'TRIGGER:-PT2H', 'ACTION:DISPLAY', 'DESCRIPTION:Game tonight', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
     const blob = new Blob([['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//KB Media//Vernon Mens Indoor//EN', `X-WR-CALNAME:${e(t.name)}`, ...ev, 'END:VCALENDAR'].join('\r\n')], {type: 'text/calendar'});
@@ -522,23 +546,23 @@ async function act(a, v, el) {
     if (r.error) { toast(r.error.message); return; } await refresh(); return;
   }
   else if (a === 'upload') {
-    const files = [...($('#ph-files').files || [])], fid = $('#ph-fx').value, f = FX.find(x => x.id === fid), cap = $('#ph-cap').value.trim();
+    const files = [...($('#ph-files').files || [])], fid = $('#ph-fx').value || null, f = FX.find(x => x.id === fid), cap = $('#ph-cap').value.trim(), team = $('#ph-team').value || null, wm = $('#ph-wm').checked;
     if (!files.length) { toast('Choose at least one photo'); return; }
     el.disabled = true;
     for (let i = 0; i < files.length; i++) {
       toast(`Uploading ${i + 1} of ${files.length}…`);
-      const blob = await shrink(files[i]), path = `${f.code}/${Date.now()}-${i}.jpg`;
+      const blob = await shrink(files[i], wm), path = `${f ? f.code : 'gallery'}/${Date.now()}-${i}.jpg`;
       const up = await sb.storage.from('media').upload(path, blob, {contentType: 'image/jpeg'});
       if (up.error) { toast(up.error.message); el.disabled = false; return; }
       const url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
-      const ins = await sb.from('media').insert({fixture_id: fid, kind: 'photo', url, caption: cap || null});
+      const ins = await sb.from('media').insert({fixture_id: fid, team_id: team, kind: 'photo', url, caption: cap || null});
       if (ins.error) { toast(ins.error.message); el.disabled = false; return; }
     }
     toast('Photos added'); await refresh(); return;
   }
   else if (a === 'highlight') {
     const url = $('#hl-url').value.trim(); if (!/^https:\/\//.test(url)) { toast('Paste a full https:// link'); return; }
-    const r = await sb.from('media').insert({fixture_id: $('#ph-fx').value, kind: 'highlight', url}); if (r.error) { toast(r.error.message); return; }
+    const r = await sb.from('media').insert({fixture_id: $('#ph-fx').value || null, team_id: $('#ph-team').value || null, kind: 'highlight', url}); if (r.error) { toast(r.error.message); return; }
     toast('Highlight added'); await refresh(); return;
   }
   else if (a === 'delmedia') {
