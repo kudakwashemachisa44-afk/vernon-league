@@ -172,7 +172,7 @@ V.home = () => {
       <div class="card st"><span class="st-n">2</span><p><b>Admin approves.</b> One tap checks it before it goes public.</p></div>
       <div class="card st"><span class="st-n">3</span><p><b>Everything updates.</b> Table, stats and team pages refresh on their own.</p></div>
     </div></section>
-  <section class="sec"><span class="k">League partners</span>${SPONSORS.length ? `<div class="more">${SPONSORS.map(sponsorCard).join('')}</div>` : `<a class="slot" href="#partners" style="text-decoration:none">Your business here · partner slots open</a>`}</section>`;
+  <section class="sec"><span class="k">League partners</span><div class="partners">${kbCard()}${SPONSORS.map(sponsorCard).join('')}<a class="slot" href="#partners" style="text-decoration:none">Your business here · partner slots open</a></div></section>`;
 };
 const sponsorCard = s => `<a class="card" href="${esc(s.link_url || '#partners')}" target="_blank" rel="noopener">${s.logo_url ? `<img src="${esc(s.logo_url)}" alt="${esc(s.name)}" style="max-height:48px;object-fit:contain">` : `<b>${esc(s.name)}</b>`}<span>${esc(s.tier)} partner</span></a>`;
 
@@ -268,6 +268,8 @@ V.match = code => {
   ${ph.length ? `<section class="sec"><h2>Photos & highlights</h2><div class="gal">${ph.map(mediaTile).join('')}</div></section>` : ''}`;
 };
 const IG = 'https://instagram.com/kbmedia.ca';
+const LOGO = 'kbmedia-logo.png', LOGO_IMG = new Image(); LOGO_IMG.src = LOGO;
+const kbCard = () => `<a class="card kb" href="${esc(CFG.booking || IG)}" target="_blank" rel="noopener"><img src="kbmedia-logo-128.png" alt="KB Media logo" width="48" height="48"><span><span class="k">Media partner</span><b>KB Media</b><small>Match photos, highlights and this website</small></span></a>`;
 const mLabel = x => { const f = FX.find(y => y.id === x.fixture_id); if (f) return `${T[f.home].short} ${f.status === 'final' ? f.hs + '–' + f.as : 'v'} ${T[f.away].short} · ${fmtDay(f.date)}`; return x.team_id && T[x.team_id] ? T[x.team_id].name : ''; };
 const mediaTile = x => x.kind === 'photo'
   ? `<button class="ph" data-act="view" data-v="${x.id}" style="background:#1a2822 url('${esc(x.url)}') center/cover" aria-label="Open photo"><span>${esc(x.caption || '')}<small>${mLabel(x)}</small></span></button>`
@@ -284,7 +286,7 @@ function viewPhoto(id) {
 }
 V.gallery = () => {
   const hl = MEDIA.filter(x => x.kind === 'highlight'), ph = MEDIA.filter(x => x.kind === 'photo');
-  return `<section class="sec"><p class="k">KB Media · Sports photography</p><h1>Gallery</h1>
+  return `<section class="sec"><p class="k row" style="gap:8px"><img src="kbmedia-logo-128.png" alt="" width="26" height="26">KB Media · Sports photography</p><h1>Gallery</h1>
   <p class="muted">Indoor league moments from KB Media. Tap a photo to see it bigger. For full-quality photos, team shoots or highlight reels, get in touch.</p>
   <div class="row">${CFG.booking ? `<a class="btn" href="${esc(CFG.booking)}" target="_blank" rel="noopener">Book a shoot</a><a class="btn ghost" href="${IG}" target="_blank" rel="noopener">Instagram</a>` : `<a class="btn" href="${IG}" target="_blank" rel="noopener">Follow on Instagram</a>`}${CFG.email ? `<span class="row" style="gap:8px"><span class="email">${esc(CFG.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(CFG.email)}">Copy email</button></span>` : ''}</div></section>
   ${hl.length ? `<section class="sec"><h2>Highlights</h2><div class="gal">${hl.map(mediaTile).join('')}</div></section>` : ''}
@@ -293,7 +295,7 @@ V.gallery = () => {
 };
 V.partners = () => `<section class="sec"><h1>Partners</h1>
   <p>Players and their friends check this site every week for scores and stats. Partner money keeps the site free for players.</p>
-  ${SPONSORS.length ? `<div class="more">${SPONSORS.map(sponsorCard).join('')}</div>` : ''}
+  <div class="partners">${kbCard()}${SPONSORS.map(sponsorCard).join('')}</div>
   <div class="tiers">
     <div class="card tier"><span class="k">Headline partner</span><span class="pr">$250</span><span class="small muted">per season · 1 spot</span><ul><li>Logo on every page</li><li>"Presented by" on the weekly Golden Boot graphic</li><li>Mention in match highlight posts</li></ul></div>
     <div class="card tier"><span class="k">Matchday partner</span><span class="pr">$150</span><span class="small muted">per season · 2 spots</span><ul><li>Logo on fixtures and results</li><li>Link to your website</li></ul></div>
@@ -451,7 +453,8 @@ async function scoreCard(f) {
   if (hn.length || an.length) { x.fillStyle = '#fff'; x.font = `500 40px ${B}`;
     x.textAlign = 'right'; hn.forEach((n, i) => x.fillText(n, 490, 940 + i * 58)); x.textAlign = 'left'; an.forEach((n, i) => x.fillText(n, 590, 940 + i * 58));
     x.textAlign = 'center'; x.font = `40px ${B}`; x.fillText('⚽', W/2, 940); }
-  x.textAlign = 'center'; x.fillStyle = 'rgba(255,255,255,.55)'; x.font = `600 26px ${B}`; x.fillText('RESULTS & STATS · KB MEDIA', W/2, H - 60);
+  x.textAlign = 'center'; x.fillStyle = 'rgba(255,255,255,.55)'; x.font = `600 26px ${B}`; x.fillText('RESULTS & STATS · KB MEDIA', W/2 + 36, H - 60);
+  if (LOGO_IMG.complete && LOGO_IMG.naturalWidth) { const tw = x.measureText('RESULTS & STATS · KB MEDIA').width; x.drawImage(LOGO_IMG, W/2 + 36 - tw/2 - 72, H - 102, 58, 58); }
   return await new Promise(r => c.toBlob(r, 'image/png'));
 }
 function showImage(url) {
@@ -480,7 +483,8 @@ async function shrink(file, wm) {
   try { const img = await createImageBitmap(file); const k = Math.min(1, 1600 / Math.max(img.width, img.height));
     const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
-    if (wm) { const s = Math.round(c.width * .028); g.font = `700 ${s}px Figtree, system-ui, sans-serif`; g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,.7)'; g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = s * .4; g.fillText('KB MEDIA', c.width - s, c.height - s); }
+    if (wm) { const s = Math.round(c.width * .028); g.font = `700 ${s}px Figtree, system-ui, sans-serif`; g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,.7)'; g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = s * .4; if (LOGO_IMG.complete && LOGO_IMG.naturalWidth) { const L = Math.round(c.width * .075); g.globalAlpha = .85; g.drawImage(LOGO_IMG, c.width - L - s, c.height - L - s, L, L); g.globalAlpha = 1; }
+      else g.fillText('KB MEDIA', c.width - s, c.height - s); }
     return await new Promise(r => c.toBlob(b => r(b || file), 'image/jpeg', .82)); } catch (e) { return file; }
 }
 async function refresh() { await load(); await admLoad(); }

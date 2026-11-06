@@ -229,6 +229,14 @@ button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inhe
 .ph,.viewer img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 .viewer .modal-in{max-width:760px}
 .viewer img{max-height:72vh;object-fit:contain;background:#000}
+.partners{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.partners .slot{display:grid;place-items:center}
+.kb{display:flex;align-items:center;gap:12px;padding:14px;color:var(--ink);text-decoration:none;min-width:0}
+.kb img{border-radius:50%;flex:none}
+.kb span{display:flex;flex-direction:column;min-width:0}
+.kb b{font:700 18px var(--display);text-transform:uppercase}
+.kb small{color:var(--muted);font-size:12px}
+@media (max-width:480px){.partners{grid-template-columns:1fr}}
 /* gallery */
 .gal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ph{aspect-ratio:4/3;max-width:100%;border-radius:12px;position:relative;overflow:hidden;color:#fff;text-decoration:none;display:flex;align-items:flex-end}
@@ -300,7 +308,7 @@ button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inhe
 <main id="app" class="wrap" aria-live="polite"></main>
 
 <footer class="foot wrap">
-  <p>Concept built by KB Media. Not affiliated with VISC or NOYSA.</p>
+  <p class="row" style="gap:8px"><img src="kbmedia-logo-128.png" alt="" width="22" height="22">Concept built by KB Media. Not affiliated with VISC or NOYSA.</p>
   <p>Players can hide their name and stats at any time. Photos are posted only with consent.</p>
 </footer>
 
@@ -314,8 +322,8 @@ button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inhe
 <div id="toast" class="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202611061617"></script>
+<script src="config.js?v=202611061622"></script>
 <script>document.addEventListener('contextmenu', e => { if (e.target.closest('.ph, .viewer')) e.preventDefault(); });</script>
-<script src="app.js?v=202611061617"></script>
+<script src="app.js?v=202611061622"></script>
 </body>
 </html>
