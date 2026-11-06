@@ -286,7 +286,7 @@ V.gallery = () => {
   const hl = MEDIA.filter(x => x.kind === 'highlight'), ph = MEDIA.filter(x => x.kind === 'photo');
   return `<section class="sec"><p class="k">KB Media · Sports photography</p><h1>Gallery</h1>
   <p class="muted">Indoor league moments from KB Media. Tap a photo to see it bigger. For full-quality photos, team shoots or highlight reels, get in touch.</p>
-  <div class="row"><a class="btn" href="${IG}" target="_blank" rel="noopener">Follow on Instagram</a>${CFG.email ? `<span class="row" style="gap:8px"><span class="email">${esc(CFG.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(CFG.email)}">Copy email</button></span>` : ''}</div></section>
+  <div class="row">${CFG.booking ? `<a class="btn" href="${esc(CFG.booking)}" target="_blank" rel="noopener">Book a shoot</a><a class="btn ghost" href="${IG}" target="_blank" rel="noopener">Instagram</a>` : `<a class="btn" href="${IG}" target="_blank" rel="noopener">Follow on Instagram</a>`}${CFG.email ? `<span class="row" style="gap:8px"><span class="email">${esc(CFG.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(CFG.email)}">Copy email</button></span>` : ''}</div></section>
   ${hl.length ? `<section class="sec"><h2>Highlights</h2><div class="gal">${hl.map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><h2>Photos</h2>${ph.length ? `<div class="gal">${ph.map(mediaTile).join('')}</div>` : empty('No photos yet. Check back during the season.')}
   <p class="small muted">All photos © KB Media, posted with player consent. Want one taken down? Message KB Media.</p></section>`;
