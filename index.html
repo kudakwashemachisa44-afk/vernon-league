@@ -193,6 +193,28 @@ td.pts{font:700 17px var(--display)}
 .scorers .ball{font-size:18px;line-height:1.2}
 .crest.badge{background:#fff;overflow:hidden}
 .crest.badge img{width:86%;height:86%;object-fit:contain}
+/* last 5 */
+.l5{display:inline-flex;gap:4px;vertical-align:middle}
+.fm{width:20px;height:20px;border-radius:50%;display:inline-grid;place-items:center;font:700 11px/1 var(--body);font-style:normal}
+.fm.W{background:var(--accent);color:var(--accent-ink)}
+.fm.D{background:var(--muted);color:var(--surface)}
+.fm.L{background:var(--loss);color:#fff}
+.fm.E{box-shadow:inset 0 0 0 1.5px var(--line)}
+/* table: rank and team stay put while the numbers scroll */
+.tbl th.pos,.tbl td.pos{position:sticky;left:0;z-index:1;background:var(--surface)}
+.tbl th.tm,.tbl td.tm{position:sticky;left:32px;z-index:1;background:var(--surface);box-shadow:1px 0 0 var(--line);min-width:150px;max-width:180px}
+.tbl td.tm .nm{max-width:120px}
+/* cards */
+.ci{display:inline-block;width:10px;height:13px;border-radius:2px;vertical-align:-2px;margin:0 6px;font-style:normal}
+.ci.y{background:#f5c518}.ci.r{background:#d92d20}
+.ci.big{width:14px;height:19px;margin:0}
+.scorers.cards li{display:block}
+.grow4{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:center}
+.sheet{display:flex;flex-direction:column;gap:10px}
+.sc-in{width:76px;text-align:center;font:800 24px var(--display)}
+.modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.7);display:grid;place-items:center;padding:16px}
+.modal-in{background:var(--surface);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;max-width:420px;width:100%}
+.modal-in img{border-radius:8px;width:100%}
 /* gallery */
 .gal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ph{aspect-ratio:4/3;max-width:100%;border-radius:12px;position:relative;overflow:hidden;color:#fff;text-decoration:none;display:flex;align-items:flex-end}

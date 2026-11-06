@@ -20,18 +20,20 @@ async function load() {
   t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation, badge:x.badge_url}; SLUG[x.slug] = x.id; });
   TIDS = Object.keys(T);
   const fids = f.data.map(x => x.id);
-  const [p, g, sp, md] = await Promise.all([
+  const [p, g, sp, md, cd] = await Promise.all([
     sb.from('public_players').select('*').in('team_id', TIDS).eq('active', true).order('sort'),
     fids.length ? sb.from('goals').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('sponsors').select('*').eq('season_id', SEASON.id).order('sort'),
-    fids.length ? sb.from('media').select('*').in('fixture_id', fids).order('created_at', {ascending:false}) : {data:[]}
+    fids.length ? sb.from('media').select('*').in('fixture_id', fids).order('created_at', {ascending:false}) : {data:[]},
+    fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]}
   ]);
   P = {}; SQUAD = {}; TIDS.forEach(id => SQUAD[id] = []);
   (p.data||[]).forEach(x => { P[x.id] = {id:x.id, team:x.team_id, name:x.name, hidden:!x.name, pos:x.position||'', slot:x.lineup_slot, ph:!!x.is_placeholder}; SQUAD[x.team_id].push(x.id); });
-  FX = f.data.map(x => ({id:x.id, code:x.code, week:x.week, stage:x.stage, date:new Date(x.kickoff), home:x.home_team_id, away:x.away_team_id, status:x.status, hs:x.home_goals, as:x.away_goals, goals:[]}));
+  FX = f.data.map(x => ({id:x.id, code:x.code, week:x.week, stage:x.stage, date:new Date(x.kickoff), home:x.home_team_id, away:x.away_team_id, status:x.status, hs:x.home_goals, as:x.away_goals, goals:[], cards:[]}));
   FXI = Object.fromEntries(FX.map(x => [x.code, x]));
   const byId = Object.fromEntries(FX.map(x => [x.id, x]));
   (g.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].goals.push({t:x.team_id, s:x.scorer_id, a:x.assist_id}));
+  (cd.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].cards.push({t:x.team_id, p:x.player_id, c:x.color}));
   SPONSORS = sp.data || []; MEDIA = md.data || [];
 }
 
@@ -125,11 +127,16 @@ function matchLineups(f) {
   <h3>Subs</h3><div class="goals">${restList(f.home, H.rest, m)}${restList(f.away, A.rest, m)}</div>
   <p class="small muted">⚽ scored, 👟 assisted. Lineups show each team's usual formation.</p></section>`;
 }
+// Last 5: oldest on the left, newest on the right; unplayed slots stay as empty circles.
+function formDots(form) {
+  const last = form.slice(-5), pad = 5 - last.length, sym = {W:'✓', D:'–', L:'✕'}, word = {W:'Win', D:'Draw', L:'Loss'};
+  return `<span class="l5" aria-label="Last 5: ${last.map(x => word[x]).join(', ') || 'no games yet'}">${'<i class="fm E"></i>'.repeat(pad)}${last.map(x => `<i class="fm ${x}">${sym[x]}</i>`).join('')}</span>`;
+}
 function tableHTML(rows, mini) {
-  return `<div class="tbl"><table><thead><tr><th>#</th><th class="tm">Team</th><th>GP</th>${mini ? '' : '<th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th>'}<th>GD</th><th>Pts</th>${mini ? '' : '<th>Form</th>'}</tr></thead><tbody>
+  return `<div class="tbl"><table><thead><tr><th class="pos">#</th><th class="tm">Team</th><th>GP</th>${mini ? '' : '<th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th>'}<th>GD</th><th>Pts</th>${mini ? '' : '<th>Last 5</th>'}</tr></thead><tbody>
   ${rows.map((r,i) => `<tr><td class="pos">${i+1}</td><td class="tm"><a href="#team-${T[r.t].slug}">${crest(r.t)}<span class="nm">${tname(r.t)}</span></a></td><td>${r.gp}</td>
   ${mini ? '' : `<td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td>`}<td>${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="pts">${r.pts}</td>
-  ${mini ? '' : `<td><span class="form">${r.form.slice(-5).map(x => `<span class="fd ${x}">${x}</span>`).join('')}</span></td>`}</tr>`).join('')}
+  ${mini ? '' : `<td>${formDots(r.form)}</td>`}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
@@ -220,7 +227,7 @@ V.team = slug => {
   const res = fx.filter(f => f.status === 'final').sort((a,b) => b.date - a.date), up = fx.filter(f => f.status !== 'final').sort((a,b) => a.date - b.date).slice(0, 3);
   const {xi, rest, has} = lineup(id);
   return `<section class="thead">${crest(id, 'lg')}<div><h1>${esc(t.name)}</h1><p class="muted">${r.gp ? `${ord(pos)} · ` : ''}${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts</p>
-  ${r.form.length ? `<span class="form" style="justify-content:flex-start;margin-top:6px">${r.form.slice(-5).map(x => `<span class="fd ${x}">${x}</span>`).join('')}</span>` : ''}
+  ${r.gp ? `<div style="margin-top:8px">${formDots(r.form)}</div>` : ''}
   <button class="btn ${MYTEAM === id ? '' : 'ghost'} sm" data-act="follow" data-v="${id}" style="margin-top:8px">${MYTEAM === id ? '★ My team' : '☆ Set as my team'}</button></div></section>
   <section class="tinfo">
     <div class="card pad kit">${jersey(t)}<div><span class="k">Kit</span><p>${t.todo ? 'Colours to confirm' : 'Home colours'}</p></div></div>
@@ -238,13 +245,15 @@ V.match = code => {
   const fin = f.status === 'final';
   const gl = t => f.goals.filter(x => x.t === t).map(x => `<li><b>${x.s ? pname(x.s) : '<span class="hid">Scorer not reported</span>'}</b>${x.a ? `<span class="as">${pname(x.a)} (Assist)</span>` : ''}</li>`).join('');
   const missing = t => fin && (t === f.home ? f.hs : f.as) > f.goals.filter(x => x.t === t).length;
+  const cl = t => f.cards.filter(x => x.t === t).map(x => `<li><i class="ci ${x.c === 'red' ? 'r' : 'y'}" aria-label="${x.c} card"></i>${pname(x.p)}</li>`).join('');
+  const cardsBlock = f.cards.length ? `<div class="scorers cards"><ul class="h">${cl(f.home)}</ul><span class="ball"><i class="ci big ${f.cards.some(x => x.c === 'yellow') ? 'y' : 'r'}"></i></span><ul>${cl(f.away)}</ul></div>` : '';
   const scorers = fin && (f.hs || f.as) ? `<div class="scorers"><ul class="h">${gl(f.home)}${missing(f.home) ? '<li class="hid">Scorers to come</li>' : ''}</ul><span class="ball" aria-label="Goals">⚽</span><ul>${gl(f.away)}${missing(f.away) ? '<li class="hid">Scorers to come</li>' : ''}</ul></div>` : '';
   const ph = MEDIA.filter(x => x.fixture_id === f.id);
   return `<section class="sec"><p class="k">${f.week ? `Week ${f.week} · ` : ''}${fmtDay(f.date)} · ${fmtTime(f.date)} · ${esc(LEAGUE.venue || '')}</p>
   <div class="card board"><a class="side" href="#team-${T[f.home].slug}" style="color:inherit;text-decoration:none">${crest(f.home, 'lg')}<span class="nm">${tname(f.home)}</span></a>
     ${fin ? `<div class="big-sc">${f.hs}<span>–</span>${f.as}</div>` : `<div class="big-ko">${fmtTime(f.date)}</div>`}
-    <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a>${scorers}</div>
-  <div class="row" style="justify-content:center">${pill(f)}<button class="btn ghost sm" data-act="share" data-v="${f.code}">Share</button></div></section>
+    <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a>${scorers}${cardsBlock}</div>
+  <div class="row" style="justify-content:center">${pill(f)}${fin ? `<button class="btn sm" data-act="card" data-v="${f.code}">Share score card</button>` : ''}<button class="btn ghost sm" data-act="share" data-v="${f.code}">Share link</button></div></section>
   ${matchLineups(f)}
   ${(() => { const hh = FX.filter(x => x.id !== f.id && ((x.home === f.home && x.away === f.away) || (x.home === f.away && x.away === f.home))).sort((a,b) => a.date - b.date);
     return hh.length ? `<section class="sec"><h2>Head-to-head this season</h2><div class="fxlist">${hh.map(x => fxRow(x)).join('')}</div></section>` : ''; })()}
@@ -334,9 +343,7 @@ V.admin = () => {
   const base = location.origin + location.pathname;
   return `<section class="sec"><div class="sec-head"><h1>Admin</h1><button class="btn ghost sm" data-act="signout">Sign out</button></div></section>
   <section class="sec"><h2>Waiting for approval (${ADM.subs.length})</h2>${ADM.subs.length ? ADM.subs.map(subCard).join('') : empty('All caught up.')}</section>
-  <section class="sec"><h2>Enter a result</h2><p class="small muted">For games no captain reported. Score only; scorers can come from captains later.</p>
-    ${past.length ? `<div class="card pad" style="display:flex;flex-direction:column;gap:10px"><select class="sel" id="mr-fx" aria-label="Match">${past.map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
-    <div class="row"><input class="sel" id="mr-h" type="number" min="0" max="30" inputmode="numeric" placeholder="Home" style="width:90px"><span>–</span><input class="sel" id="mr-a" type="number" min="0" max="30" inputmode="numeric" placeholder="Away" style="width:90px"><button class="btn" data-act="manual">Save result</button></div></div>` : empty('No past games are missing a result.')}</section>
+  ${sheetHTML()}
   <section class="sec"><h2>Upcoming fixtures</h2><div class="card">${upcoming.map(f => `<div class="adm-fx"><span><b>${esc(T[f.home].short)} v ${esc(T[f.away].short)}</b> <span class="muted">· ${fmtDay(f.date)} ${fmtTime(f.date)}</span> ${f.status === 'postponed' ? '<span class="tag loss">Postponed</span>' : ''}</span>
     <button class="btn ghost sm" data-act="postpone" data-v="${f.id}">${f.status === 'postponed' ? 'Restore' : 'Postpone'}</button></div>`).join('') || '<p class="pad muted">None.</p>'}</div></section>
   <section class="sec"><h2>Photos & highlights</h2><p class="small muted">Only post photos of players who agreed. Big photos are shrunk before upload.</p>
@@ -352,6 +359,78 @@ V.admin = () => {
   <section class="sec"><h2>Captain links</h2><p class="small muted">Send each link only to that team's captain or rep. Anyone with a link can report results for that team, and you still approve everything.</p>
     <div class="card">${ADM.tokens.filter(x => T[x.team_id]).map(x => `<div class="adm-fx"><span class="row" style="gap:8px;min-width:0">${crest(x.team_id)}<b>${tname(x.team_id)}</b></span><button class="btn ghost sm" data-act="copy" data-v="${base}?c=${x.token}#captain">Copy link</button></div>`).join('')}</div></section>`;
 };
+/* match sheet: score, scorers, assists and cards for any played game */
+function openSheet(fid) { const f = FX.find(x => x.id === fid);
+  ADM.sheet = {fid, hs: f.hs, as: f.as, goals: f.goals.map(g => ({t:g.t, s:g.s || '', a:g.a || ''})), cards: f.cards.map(c => ({t:c.t, p:c.p || '', c:c.c}))}; }
+function sheetHTML() {
+  const list = FX.filter(played).sort((a,b) => b.date - a.date); if (!list.length) return '';
+  if (!ADM.sheet || !list.find(f => f.id === ADM.sheet.fid)) openSheet((list.find(f => f.status !== 'final') || list[0]).id);
+  const S = ADM.sheet, f = FX.find(x => x.id === S.fid);
+  const nm = id => ADM.names[id] || (P[id] && P[id].name) || 'Unknown';
+  const opts = (t, v, blank) => `<option value="">${blank}</option>` + (SQUAD[t] || []).map(id => `<option value="${id}" ${id === v ? 'selected' : ''}>${esc(nm(id))}</option>`).join('');
+  const goalRows = t => S.goals.map((g,i) => g.t !== t ? '' : `<div class="grow4"><b>⚽</b><select class="sel" data-act="ms-gs" data-v="${i}" aria-label="Scorer">${opts(t, g.s, 'Not sure')}</select><select class="sel" data-act="ms-ga" data-v="${i}" aria-label="Assist">${opts(t, g.a, 'No assist')}</select><button class="btn ghost sm" data-act="ms-gdel" data-v="${i}" aria-label="Remove goal">✕</button></div>`).join('');
+  const both = v => [f.home, f.away].map(t => `<optgroup label="${tname(t)}">${(SQUAD[t] || []).map(id => `<option value="${t}|${id}" ${v === t + '|' + id ? 'selected' : ''}>${esc(nm(id))}</option>`).join('')}</optgroup>`).join('');
+  const cardRows = S.cards.map((c,i) => `<div class="grow4"><i class="ci ${c.c === 'red' ? 'r' : 'y'}"></i><select class="sel" data-act="ms-cp" data-v="${i}" aria-label="Player"><option value="">Choose player…</option>${both(c.p ? c.t + '|' + c.p : '')}</select><select class="sel" data-act="ms-cc" data-v="${i}" aria-label="Card"><option value="yellow" ${c.c === 'yellow' ? 'selected' : ''}>Yellow</option><option value="red" ${c.c === 'red' ? 'selected' : ''}>Red</option></select><button class="btn ghost sm" data-act="ms-cdel" data-v="${i}" aria-label="Remove card">✕</button></div>`).join('');
+  return `<section class="sec"><h2>Match sheet</h2><p class="small muted">Type in the ref's card or what players tell you. Saving replaces this game's score, scorers and cards.</p>
+  <div class="card pad sheet">
+    <select class="sel" id="ms-fx" data-act="ms-fx" aria-label="Match">${list.map(x => `<option value="${x.id}" ${x.id === S.fid ? 'selected' : ''}>${x.status === 'final' ? '✓ ' : ''}${fmtDay(x.date)} · ${esc(T[x.home].short)} v ${esc(T[x.away].short)}</option>`).join('')}</select>
+    <div class="row" style="justify-content:center;gap:12px">${crest(f.home)}<input class="sel sc-in" id="ms-h" type="number" min="0" max="30" inputmode="numeric" data-act="ms-h" value="${S.hs ?? ''}" aria-label="${tname(f.home)} score"><b>–</b><input class="sel sc-in" id="ms-a" type="number" min="0" max="30" inputmode="numeric" data-act="ms-a" value="${S.as ?? ''}" aria-label="${tname(f.away)} score">${crest(f.away)}</div>
+    <span class="k">${tname(f.home)} goals</span>${goalRows(f.home)}<button class="btn ghost sm" data-act="ms-gadd" data-v="${f.home}">+ Goal</button>
+    <span class="k">${tname(f.away)} goals</span>${goalRows(f.away)}<button class="btn ghost sm" data-act="ms-gadd" data-v="${f.away}">+ Goal</button>
+    <span class="k">Cards</span>${cardRows}<button class="btn ghost sm" data-act="ms-cadd">+ Card</button>
+    <button class="btn block" data-act="ms-save">Save match sheet</button>
+  </div></section>`;
+}
+async function saveSheet(el) {
+  const S = ADM.sheet, f = FX.find(x => x.id === S.fid);
+  if (!(S.hs >= 0 && S.as >= 0)) { toast('Enter both scores'); return; }
+  if (S.goals.filter(g => g.t === f.home).length > S.hs || S.goals.filter(g => g.t === f.away).length > S.as) { toast('More goal lines than the score. Check it.'); return; }
+  el.disabled = true;
+  const steps = [
+    () => sb.from('fixtures').update({home_goals: S.hs, away_goals: S.as, status: 'final'}).eq('id', f.id),
+    () => sb.from('goals').delete().eq('fixture_id', f.id),
+    () => S.goals.length ? sb.from('goals').insert(S.goals.map(g => ({fixture_id: f.id, team_id: g.t, scorer_id: g.s || null, assist_id: g.a || null}))) : {},
+    () => sb.from('cards').delete().eq('fixture_id', f.id),
+    () => S.cards.filter(c => c.p).length ? sb.from('cards').insert(S.cards.filter(c => c.p).map(c => ({fixture_id: f.id, team_id: c.t, player_id: c.p, color: c.c}))) : {}
+  ];
+  for (const st of steps) { const r = await st(); if (r && r.error) { toast(r.error.message); el.disabled = false; return; } }
+  toast('Match sheet saved'); const keep = f.id; await refresh(); openSheet(keep); render(false);
+}
+
+/* score card image for Instagram / WhatsApp */
+async function scoreCard(f) {
+  const W = 1080, H = 1350, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+  try { await Promise.all([document.fonts.load('800 200px "Saira Condensed"'), document.fonts.load('700 40px Figtree'), document.fonts.load('500 30px Figtree')]); } catch (e) {}
+  const h = T[f.home], a = T[f.away], D = '"Saira Condensed", "Arial Narrow", sans-serif', B = 'Figtree, system-ui, sans-serif';
+  x.fillStyle = '#0c1411'; x.fillRect(0, 0, W, H);
+  x.globalAlpha = .9; x.fillStyle = h.c1; x.beginPath(); x.moveTo(0, 0); x.lineTo(640, 0); x.lineTo(440, 820); x.lineTo(0, 820); x.fill();
+  x.fillStyle = a.c1; x.beginPath(); x.moveTo(640, 0); x.lineTo(W, 0); x.lineTo(W, 820); x.lineTo(440, 820); x.fill(); x.globalAlpha = 1;
+  const gr = x.createLinearGradient(0, 380, 0, 900); gr.addColorStop(0, 'rgba(12,20,17,0)'); gr.addColorStop(1, 'rgba(12,20,17,1)'); x.fillStyle = gr; x.fillRect(0, 380, W, 520);
+  x.textAlign = 'center'; x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.35)'; x.shadowBlur = 12;
+  x.font = `700 34px ${B}`; x.fillText("VERNON MEN'S INDOOR", W/2, 96);
+  x.font = `500 30px ${B}`; x.fillText(`Week ${f.week || ''} · ${fmtDay(f.date)}`.toUpperCase(), W/2, 144);
+  const crestAt = (t, cx, cy) => { const r = 120, g = x.createLinearGradient(cx - r, cy - r, cx + r, cy + r); g.addColorStop(0, t.c1); g.addColorStop(.62, t.c1); g.addColorStop(.62, t.c2); g.addColorStop(1, t.c2);
+    x.save(); x.shadowBlur = 24; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fillStyle = g; x.fill(); x.restore(); x.lineWidth = 8; x.strokeStyle = '#fff'; x.stroke();
+    x.save(); x.shadowBlur = 0; x.fillStyle = lum(t.c1) > .6 ? '#111' : '#fff'; x.font = `800 72px ${D}`; x.fillText(t.short, cx, cy + 25); x.restore(); };
+  crestAt(h, 250, 390); crestAt(a, 830, 390);
+  const fit = (txt, size, max) => { let s = size; do { x.font = `700 ${s}px ${B}`; s -= 2; } while (x.measureText(txt).width > max && s > 24); };
+  fit(h.name, 44, 360); x.fillText(h.name, 250, 575); fit(a.name, 44, 360); x.fillText(a.name, 830, 575);
+  x.font = `800 230px ${D}`; x.fillText(`${f.hs}–${f.as}`, W/2, 470);
+  x.shadowBlur = 0; x.font = `700 28px ${B}`; x.fillStyle = 'rgba(255,255,255,.85)'; x.fillText('FULL TIME', W/2, 640);
+  const names = t => { const m = new Map(); f.goals.filter(g => g.t === t && g.s && P[g.s] && !P[g.s].hidden).forEach(g => m.set(P[g.s].name, (m.get(P[g.s].name) || 0) + 1));
+    const arr = [...m].map(([n, k]) => k > 1 ? `${n} ×${k}` : n); return arr.length > 4 ? [...arr.slice(0, 3), `+${arr.length - 3} more`] : arr; };
+  const hn = names(f.home), an = names(f.away);
+  if (hn.length || an.length) { x.fillStyle = '#fff'; x.font = `500 40px ${B}`;
+    x.textAlign = 'right'; hn.forEach((n, i) => x.fillText(n, 490, 940 + i * 58)); x.textAlign = 'left'; an.forEach((n, i) => x.fillText(n, 590, 940 + i * 58));
+    x.textAlign = 'center'; x.font = `40px ${B}`; x.fillText('⚽', W/2, 940); }
+  x.textAlign = 'center'; x.fillStyle = 'rgba(255,255,255,.55)'; x.font = `600 26px ${B}`; x.fillText('RESULTS & STATS · KB MEDIA', W/2, H - 60);
+  return await new Promise(r => c.toBlob(r, 'image/png'));
+}
+function showImage(url) {
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="modal-in"><img src="${url}" alt="Score card"><p class="small">Press and hold the image to save it, then post it to Instagram.</p><button class="btn block">Close</button></div>`;
+  m.addEventListener('click', e => { if (e.target === m || e.target.tagName === 'BUTTON') m.remove(); }); document.body.appendChild(m);
+}
 async function admLoad() {
   const { data } = await sb.auth.getSession(); ADM.session = data.session; ADM.loaded = true;
   if (ADM.session) {
@@ -393,6 +472,15 @@ function render(top) {
 async function act(a, v, el) {
   if (a === 'copy') { const no = () => toast('Press and hold to copy'); try { navigator.clipboard.writeText(v).then(() => toast('Copied'), no); } catch (e) { no(); } return; }
   if (a === 'follow') { MYTEAM = MYTEAM === v ? null : v; try { MYTEAM ? localStorage.setItem('myteam', v) : localStorage.removeItem('myteam'); } catch (e) {} toast(MYTEAM ? 'Saved as your team' : 'Removed'); render(false); return; }
+  if (a === 'card') { const f = FXI[v]; toast('Making your score card…'); const blob = await scoreCard(f); if (!blob) { toast('Could not make the image'); return; }
+    const file = new File([blob], `${T[f.home].short}-${T[f.away].short}-${f.hs}-${f.as}.png`, {type: 'image/png'});
+    if (navigator.canShare && navigator.canShare({files: [file]})) { navigator.share({files: [file], title: `${T[f.home].name} ${f.hs}–${f.as} ${T[f.away].name}`}).catch(() => {}); }
+    else showImage(URL.createObjectURL(blob)); return; }
+  if (a === 'ms-gadd') { ADM.sheet.goals.push({t: v, s: '', a: ''}); render(false); return; }
+  if (a === 'ms-gdel') { ADM.sheet.goals.splice(+v, 1); render(false); return; }
+  if (a === 'ms-cadd') { const f = FX.find(x => x.id === ADM.sheet.fid); ADM.sheet.cards.push({t: f.home, p: '', c: 'yellow'}); render(false); return; }
+  if (a === 'ms-cdel') { ADM.sheet.cards.splice(+v, 1); render(false); return; }
+  if (a === 'ms-save') { await saveSheet(el); return; }
   if (a === 'share') { const f = FXI[v], url = location.origin + location.pathname + '#match-' + v;
     const text = f.status === 'final' ? `${T[f.home].name} ${f.hs}–${f.as} ${T[f.away].name}` : `${T[f.home].name} v ${T[f.away].name}, ${fmtDay(f.date)} ${fmtTime(f.date)}`;
     if (navigator.share) { navigator.share({title: text, text, url}).catch(() => {}); } else { try { navigator.clipboard.writeText(text + ' ' + url).then(() => toast('Link copied')); } catch (e) {} } return; }
@@ -454,6 +542,13 @@ document.addEventListener('click', e => { const el = e.target.closest('[data-act
 document.addEventListener('change', e => {
   const el = e.target, a = el.dataset.act; if (!a) return;
   if (a === 'fxteam') { fxTeam = el.value; render(false); return; }
+  if (a.startsWith('ms-') && ADM.sheet) { const S = ADM.sheet, i = +el.dataset.v;
+    if (a === 'ms-fx') { openSheet(el.value); render(false); }
+    else if (a === 'ms-h' || a === 'ms-a') S[a === 'ms-h' ? 'hs' : 'as'] = el.value === '' ? null : Math.max(0, parseInt(el.value, 10));
+    else if (a === 'ms-gs') S.goals[i].s = el.value; else if (a === 'ms-ga') S.goals[i].a = el.value;
+    else if (a === 'ms-cp') { const [t, p] = el.value.split('|'); S.cards[i].t = t || S.cards[i].t; S.cards[i].p = p || ''; }
+    else if (a === 'ms-cc') { S.cards[i].c = el.value; render(false); }
+    return; }
   if (a === 'cap-s' || a === 'cap-a') { CAP.sc[+el.dataset.v][a === 'cap-s' ? 's' : 'a'] = el.value; const b = $('#cap-submit'); if (b) b.disabled = !CAP.sc.every(x => x.s); }
 });
 document.addEventListener('submit', async e => {
