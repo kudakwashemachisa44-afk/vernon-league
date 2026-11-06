@@ -215,10 +215,17 @@ V.stats = () => {
   const list = [...L].filter(x => statTab === 'g' ? x.g > 0 : x.a > 0).sort((a,b) => statTab === 'g' ? b.g - a.g || b.a - a.a : b.a - a.a || b.g - a.g).slice(0, 20);
   return `<section class="sec"><h1>Stats</h1>
   ${top ? `<div class="gb"><div><p class="k">Golden Boot · after week ${lastWeek()}</p><h3>${esc(P[top.id].name)}</h3><p>${tname(P[top.id].team)}</p><p class="gb-sp">${SPONSORS.find(s => s.tier === 'headline') ? `Presented by <b>${esc(SPONSORS.find(s => s.tier === 'headline').name)}</b>` : 'KB Media weekly graphic'}</p></div><div class="gb-n">${top.g}<small>goals</small></div></div>` : ''}
-  <div class="chips"><button class="chip ${statTab === 'g' ? 'on' : ''}" data-act="stat" data-v="g">Goals</button><button class="chip ${statTab === 'a' ? 'on' : ''}" data-act="stat" data-v="a">Assists</button></div>
-  ${list.length ? `<ol class="rank card">${list.map((x,i) => `<li><span class="rn">${i+1}</span><span class="who">${crest(P[x.id].team)}<span><b class="nm">${pname(x.id)}</b><small>${tname(P[x.id].team)} · ${statTab === 'g' ? x.a + ' assists' : x.g + ' goals'}</small></span></span><span class="v">${statTab === 'g' ? x.g : x.a}</span></li>`).join('')}</ol>` : empty('Stats appear once captains report scorers.')}
+  <div class="chips"><button class="chip ${statTab === 'g' ? 'on' : ''}" data-act="stat" data-v="g">Goals</button><button class="chip ${statTab === 'a' ? 'on' : ''}" data-act="stat" data-v="a">Assists</button><button class="chip ${statTab === 'c' ? 'on' : ''}" data-act="stat" data-v="c">Cards</button></div>
+  ${statTab === 'c' ? discHTML() : list.length ? `<ol class="rank card">${list.map((x,i) => `<li><span class="rn">${i+1}</span><span class="who">${crest(P[x.id].team)}<span><b class="nm">${pname(x.id)}</b><small>${tname(P[x.id].team)} · ${statTab === 'g' ? x.a + ' assists' : x.g + ' goals'}</small></span></span><span class="v">${statTab === 'g' ? x.g : x.a}</span></li>`).join('')}</ol>` : empty('Stats appear once captains report scorers.')}
   <p class="small muted">"Name hidden" means the player opted out of public stats. Their goals still count for the team.</p></section>`;
 };
+function discHTML() {
+  const m = {}; FX.forEach(f => f.cards.forEach(c => { if (!c.p || !P[c.p]) return; const r = m[c.p] || (m[c.p] = {id:c.p, y:0, r:0}); c.c === 'red' ? r.r++ : r.y++; }));
+  const list = Object.values(m).sort((a,b) => b.r - a.r || b.y - a.y);
+  if (!list.length) return empty('No cards yet. Cards come from the ref\'s match sheet.');
+  return `<ol class="rank card">${list.map((x,i) => `<li><span class="rn">${i+1}</span><span class="who">${crest(P[x.id].team)}<span><b class="nm">${pname(x.id)}</b><small>${tname(P[x.id].team)}</small></span></span><span class="v" style="font-size:16px">${x.y ? `<i class="ci y"></i>${x.y}` : ''}${x.r ? `<i class="ci r"></i>${x.r}` : ''}</span></li>`).join('')}</ol>
+  <p class="small muted">Suspensions follow the league's own rules. This list just keeps count.</p>`;
+}
 V.teams = () => `<section class="sec"><h1>Teams</h1><div class="more">${TIDS.map(t => `<a class="card" href="#team-${T[t].slug}" style="flex-direction:row;align-items:center;gap:12px">${crest(t, 'md')}<b class="nm" style="font:700 18px var(--display);text-transform:uppercase">${tname(t)}</b></a>`).join('')}</div></section>`;
 V.team = slug => {
   const id = SLUG[slug], t = T[id]; if (!t) return notFound();
@@ -237,7 +244,7 @@ V.team = slug => {
     ${has ? `<figure class="pitch"><svg viewBox="0 0 300 430" role="img" aria-label="${esc(t.name)} squad">${pitchLines(430)}${(() => { const sp = spots(id, true); return xi.map((p,i) => dot(id, p, sp[i].l, sp[i].x, sp[i].y, m)).join(''); })()}</svg></figure>
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
-  <section class="sec"><h2>Next matches</h2>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
+  <section class="sec"><div class="sec-head"><h2>Next matches</h2><button class="btn ghost sm" data-act="ics" data-v="${id}">📅 Add to calendar</button></div>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
   <section class="sec"><h2>Results</h2>${res.length ? `<div class="fxlist">${res.map(f => fxRow(f)).join('')}</div>` : empty('No results yet.')}</section>`;
 };
 V.match = code => {
@@ -272,7 +279,7 @@ V.partners = () => `<section class="sec"><h1>Partners</h1>
     <div class="card tier"><span class="k">Headline partner</span><span class="pr">$250</span><span class="small muted">per season · 1 spot</span><ul><li>Logo on every page</li><li>"Presented by" on the weekly Golden Boot graphic</li><li>Mention in match highlight posts</li></ul></div>
     <div class="card tier"><span class="k">Matchday partner</span><span class="pr">$150</span><span class="small muted">per season · 2 spots</span><ul><li>Logo on fixtures and results</li><li>Link to your website</li></ul></div>
     <div class="card tier"><span class="k">Supporter</span><span class="pr">$100</span><span class="small muted">per season</span><ul><li>Logo on the partner wall</li><li>Link to your website</li></ul></div>
-  </div><p class="small muted">Interested? Message KB Media on Instagram.</p></section>`;
+  </div><p class="small">Interested? <a href="https://instagram.com/kbmedia.ca" target="_blank" rel="noopener">Message KB Media on Instagram</a>.</p></section>`;
 V.info = () => `<section class="sec"><h1>League info</h1><div class="card pad" style="display:flex;flex-direction:column;gap:12px">
   <p><b>Where.</b> ${esc(LEAGUE.venue || '')} (Vernon Toyota Indoor Sports Centre).</p>
   <p><b>When.</b> One game a week. Wednesday 7:00 or 8:40 PM, Saturday 6:00 or 7:40 PM. Games are 1 hour 20 minutes.</p>
@@ -472,6 +479,11 @@ function render(top) {
 async function act(a, v, el) {
   if (a === 'copy') { const no = () => toast('Press and hold to copy'); try { navigator.clipboard.writeText(v).then(() => toast('Copied'), no); } catch (e) { no(); } return; }
   if (a === 'follow') { MYTEAM = MYTEAM === v ? null : v; try { MYTEAM ? localStorage.setItem('myteam', v) : localStorage.removeItem('myteam'); } catch (e) {} toast(MYTEAM ? 'Saved as your team' : 'Removed'); render(false); return; }
+  if (a === 'ics') { const t = T[v], p2 = n => String(n).padStart(2, '0'), u = d => `${d.getUTCFullYear()}${p2(d.getUTCMonth()+1)}${p2(d.getUTCDate())}T${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}00Z`, e = x => String(x).replace(/[\\,;]/g, m => '\\' + m);
+    const ev = FX.filter(f => (f.home === v || f.away === v) && !played(f) && f.status !== 'postponed').map(f => ['BEGIN:VEVENT', `UID:${f.id}@vernon-league`, `DTSTAMP:${u(new Date())}`, `DTSTART:${u(f.date)}`, `DTEND:${u(new Date(f.date.getTime() + 80 * 6e4))}`, `SUMMARY:${e(T[f.home].name + ' v ' + T[f.away].name)}`, `LOCATION:${e(LEAGUE.venue || '')}`, 'BEGIN:VALARM', 'TRIGGER:-PT2H', 'ACTION:DISPLAY', 'DESCRIPTION:Game tonight', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+    const blob = new Blob([['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//KB Media//Vernon Mens Indoor//EN', `X-WR-CALNAME:${e(t.name)}`, ...ev, 'END:VCALENDAR'].join('\r\n')], {type: 'text/calendar'});
+    const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `${t.slug}-fixtures.ics`; document.body.appendChild(l); l.click(); l.remove();
+    toast(`${ev.length} games added. Open the file to save them to your calendar.`); return; }
   if (a === 'card') { const f = FXI[v]; toast('Making your score card…'); const blob = await scoreCard(f); if (!blob) { toast('Could not make the image'); return; }
     const file = new File([blob], `${T[f.home].short}-${T[f.away].short}-${f.hs}-${f.as}.png`, {type: 'image/png'});
     if (navigator.canShare && navigator.canShare({files: [file]})) { navigator.share({files: [file], title: `${T[f.home].name} ${f.hs}–${f.as} ${T[f.away].name}`}).catch(() => {}); }
