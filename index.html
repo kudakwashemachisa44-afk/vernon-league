@@ -184,6 +184,15 @@ td.pts{font:700 17px var(--display)}
 .lu-h{display:flex;align-items:center;gap:8px;padding:10px 14px;color:var(--ink);text-decoration:none}
 .lu-h .tag{margin-left:auto}
 @media (max-width:560px){.tinfo{grid-template-columns:1fr}}
+/* match scorers, Premier League app style */
+.scorers{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px 14px;margin-top:6px;padding-top:14px;border-top:1px solid var(--line);font-size:14px;align-items:start}
+.scorers ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;min-width:0;text-align:left}
+.scorers ul.h{text-align:right}
+.scorers b{font-weight:600}
+.scorers .as{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
+.scorers .ball{font-size:18px;line-height:1.2}
+.crest.badge{background:#fff;overflow:hidden}
+.crest.badge img{width:86%;height:86%;object-fit:contain}
 /* gallery */
 .gal{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ph{aspect-ratio:4/3;max-width:100%;border-radius:12px;position:relative;overflow:hidden;color:#fff;text-decoration:none;display:flex;align-items:flex-end}

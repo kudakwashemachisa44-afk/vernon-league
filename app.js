@@ -17,7 +17,7 @@ async function load() {
   ]);
   if (t.error) throw t.error; if (f.error) throw f.error;
   T = {}; SLUG = {};
-  t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation}; SLUG[x.slug] = x.id; });
+  t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation, badge:x.badge_url}; SLUG[x.slug] = x.id; });
   TIDS = Object.keys(T);
   const fids = f.data.map(x => x.id);
   const [p, g, sp, md] = await Promise.all([
@@ -59,7 +59,7 @@ function lineup(t) { const sq = SQUAD[t] || []; const xi = SHAPE.map(s => sq.fin
 
 /* ---------- helpers ---------- */
 const lum = h => { const n = parseInt(h.slice(1), 16); return (.299*(n>>16&255) + .587*(n>>8&255) + .114*(n&255)) / 255; };
-const crest = (t, c = '') => { const x = T[t]; return x ? `<span class="crest ${c}" style="--c1:${x.c1};--c2:${x.c2};color:${lum(x.c1) > .6 ? '#111' : '#fff'}" aria-hidden="true">${esc(x.short)}</span>` : ''; };
+const crest = (t, c = '') => { const x = T[t]; if (!x) return ''; if (x.badge) return `<span class="crest badge ${c}" aria-hidden="true"><img src="${esc(x.badge)}" alt="" loading="lazy"></span>`; return `<span class="crest ${c}" style="--c1:${x.c1};--c2:${x.c2};color:${lum(x.c1) > .6 ? '#111' : '#fff'}" aria-hidden="true">${esc(x.short)}</span>`; };
 const fmtDay = d => d.toLocaleDateString('en-CA', {weekday:'short', month:'short', day:'numeric', timeZone:'America/Vancouver'});
 const fmtLong = d => d.toLocaleDateString('en-CA', {weekday:'long', month:'long', day:'numeric', timeZone:'America/Vancouver'});
 const fmtTime = d => d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/Vancouver'});
@@ -236,14 +236,15 @@ V.team = slug => {
 V.match = code => {
   const f = FXI[code]; if (!f || !T[f.home] || !T[f.away]) return notFound();
   const fin = f.status === 'final';
-  const gl = t => { const g = f.goals.filter(x => x.t === t); return g.length ? g.map(x => `<li>⚽ ${pname(x.s)}${x.a ? ` <small>👟 ${pname(x.a)}</small>` : ''}</li>`).join('') : `<li class="muted">${fin && (t === f.home ? f.hs : f.as) ? 'Scorers not reported yet' : 'No goals'}</li>`; };
+  const gl = t => f.goals.filter(x => x.t === t).map(x => `<li><b>${x.s ? pname(x.s) : '<span class="hid">Scorer not reported</span>'}</b>${x.a ? `<span class="as">${pname(x.a)} (Assist)</span>` : ''}</li>`).join('');
+  const missing = t => fin && (t === f.home ? f.hs : f.as) > f.goals.filter(x => x.t === t).length;
+  const scorers = fin && (f.hs || f.as) ? `<div class="scorers"><ul class="h">${gl(f.home)}${missing(f.home) ? '<li class="hid">Scorers to come</li>' : ''}</ul><span class="ball" aria-label="Goals">⚽</span><ul>${gl(f.away)}${missing(f.away) ? '<li class="hid">Scorers to come</li>' : ''}</ul></div>` : '';
   const ph = MEDIA.filter(x => x.fixture_id === f.id);
   return `<section class="sec"><p class="k">${f.week ? `Week ${f.week} · ` : ''}${fmtDay(f.date)} · ${fmtTime(f.date)} · ${esc(LEAGUE.venue || '')}</p>
   <div class="card board"><a class="side" href="#team-${T[f.home].slug}" style="color:inherit;text-decoration:none">${crest(f.home, 'lg')}<span class="nm">${tname(f.home)}</span></a>
     ${fin ? `<div class="big-sc">${f.hs}<span>–</span>${f.as}</div>` : `<div class="big-ko">${fmtTime(f.date)}</div>`}
-    <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a></div>
+    <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a>${scorers}</div>
   <div class="row" style="justify-content:center">${pill(f)}<button class="btn ghost sm" data-act="share" data-v="${f.code}">Share</button></div></section>
-  ${fin ? `<section class="sec"><h2>Goals</h2><div class="goals"><ul class="card">${gl(f.home)}</ul><ul class="card">${gl(f.away)}</ul></div></section>` : ''}
   ${matchLineups(f)}
   ${(() => { const hh = FX.filter(x => x.id !== f.id && ((x.home === f.home && x.away === f.away) || (x.home === f.away && x.away === f.home))).sort((a,b) => a.date - b.date);
     return hh.length ? `<section class="sec"><h2>Head-to-head this season</h2><div class="fxlist">${hh.map(x => fxRow(x)).join('')}</div></section>` : ''; })()}

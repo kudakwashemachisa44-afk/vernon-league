@@ -13,3 +13,6 @@ create policy media_admin_delete on storage.objects for delete to authenticated 
 
 -- 2026-11-06 later: Parceros switched to 3-3-1, Wanderers to 3-2-2; real names added (Parceros, Kal United, Kidston,
 -- Wanderers, Alexanders) and Parceros' scorers for w4-1 entered directly. Data changes only; see admin history.
+
+-- Team badges (optional image URL; falls back to the colour crest)
+alter table teams add column if not exists badge_url text;
