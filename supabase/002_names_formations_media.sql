@@ -10,3 +10,6 @@ values ('media', 'media', true, 5242880, array['image/jpeg','image/png','image/w
 on conflict (id) do nothing;
 create policy media_admin_insert on storage.objects for insert to authenticated with check (bucket_id = 'media' and public.is_admin());
 create policy media_admin_delete on storage.objects for delete to authenticated using (bucket_id = 'media' and public.is_admin());
+
+-- 2026-11-06 later: Parceros switched to 3-3-1, Wanderers to 3-2-2; real names added (Parceros, Kal United, Kidston,
+-- Wanderers, Alexanders) and Parceros' scorers for w4-1 entered directly. Data changes only; see admin history.

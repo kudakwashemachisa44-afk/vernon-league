@@ -139,8 +139,9 @@ V.home = () => {
   const next = FX.filter(f => f.status === 'scheduled' && !played(f)).sort((a,b) => a.date - b.date);
   const day = next[0], nd = day ? next.filter(f => vKey(f.date) === vKey(day.date)) : [];
   const past = FX.filter(f => played(f) && f.status !== 'postponed').sort((a,b) => b.date - a.date);
-  const days = [...new Set(past.map(f => vKey(f.date)))].slice(0, 2);
-  const latest = past.filter(f => days.includes(vKey(f.date)));
+  // Latest results = the most recent week that has kicked off: Wed games appear at kickoff (pending until scored), Sat games join them.
+  const lw = past.length ? past[0].week : null;
+  const latest = past.filter(f => f.week === lw).sort((a,b) => a.date - b.date);
   const L = leaders().filter(x => !P[x.id].hidden);
   const g = [...L].sort((a,b) => b.g - a.g)[0], a = [...L].filter(x => x.a).sort((x,y) => y.a - x.a)[0];
   const ld = (k, n, x) => `<div class="card ld"><span class="k">${k}</span><span class="ld-n">${n}</span><span class="nm">${x ? pname(x.id) : '—'}</span><span class="small muted">${x ? tname(P[x.id].team) : 'After the first results'}</span></div>`;
@@ -152,7 +153,7 @@ V.home = () => {
   <section class="hero">${day ? `<p class="k">Matchday ${day.week || ''} · ${fmtDay(day.date)} · ${esc(LEAGUE.venue || '')}</p><h1>${label}${label.endsWith('night') || label === 'Tonight' ? "'s games" : label.includes(',') ? '' : "'s games"}</h1>` : `<h1>${esc(LEAGUE.name)}</h1>`}</section>
   ${nd.length ? `<div class="fxlist">${nd.map(f => fxRow(f, false)).join('')}</div>` : ''}
   ${mt}
-  <section class="sec"><div class="sec-head"><h2>Latest results</h2><a href="#fixtures">All fixtures →</a></div>
+  <section class="sec"><div class="sec-head"><h2>${lw ? `Week ${lw} results` : 'Latest results'}</h2><a href="#fixtures">All fixtures →</a></div>
     ${latest.length ? `<div class="fxlist">${latest.map(f => fxRow(f)).join('')}</div>` : empty('No games played yet.')}</section>
   <section class="sec"><div class="sec-head"><h2>Table</h2><a href="#table">Full table →</a></div>${tableHTML(table().slice(0, 4), true)}</section>
   ${MEDIA.some(x => x.kind === 'photo') ? `<section class="sec"><div class="sec-head"><h2>Latest photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${MEDIA.filter(x => x.kind === 'photo').slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
