@@ -55,7 +55,7 @@ function leaders() { const m = {}, get = id => m[id] || (m[id] = {id, g:0, a:0})
   FX.forEach(f => { if (f.status !== 'final') return; f.goals.forEach(g => { if (g.s && P[g.s]) get(g.s).g++; if (g.a && P[g.a]) get(g.a).a++; }); });
   return Object.values(m); }
 const SHAPE = ['GK','LCB','RCB','LW','LCM','RCM','RW','ST'];
-function lineup(t) { const sq = SQUAD[t] || []; const xi = SHAPE.map(s => sq.find(id => P[id].slot === s) || null); return {xi, rest: sq.filter(id => !xi.includes(id)), has: xi.some(Boolean)}; }
+function lineup(t) { const sq = SQUAD[t] || []; const xi = SHAPE.map(s => sq.find(id => P[id].slot === s)).filter(Boolean); return {xi, rest: sq.filter(id => !xi.includes(id)), has: xi.length > 0}; }
 
 /* ---------- helpers ---------- */
 const lum = h => { const n = parseInt(h.slice(1), 16); return (.299*(n>>16&255) + .587*(n>>8&255) + .114*(n&255)) / 255; };
@@ -95,8 +95,14 @@ const empty = msg => `<div class="card pad muted">${msg}</div>`;
 
 /* ---------- pitch drawing ---------- */
 const FD = 'font-family="Saira Condensed, Arial Narrow, sans-serif"', FB = 'font-family="Figtree, system-ui, sans-serif"';
-const FULL = {GK:[150,378],LCB:[95,300],RCB:[205,300],LW:[46,196],LCM:[116,220],RCM:[184,220],RW:[254,196],ST:[150,92]};
-const HALF = {GK:[150,552],LCB:[95,488],RCB:[205,488],LW:[46,420],LCM:[116,405],RCM:[184,405],RW:[254,420],ST:[150,342]};
+const ROWX = {1:[150], 2:[95,205], 3:[55,150,245], 4:[46,116,184,254]};
+const LBL = {D:{1:['CB'],2:['LCB','RCB'],3:['LCB','CB','RCB'],4:['LB','LCB','RCB','RB']}, M:{1:['CM'],2:['LCM','RCM'],3:['LM','CM','RM'],4:['LW','LCM','RCM','RW']}, F:{1:['ST'],2:['LS','RS'],3:['LW','ST','RW']}};
+function shape(t) { const f = String(T[t].formation || '2-4-1').split('-').map(Number); return f.length === 3 && f.every(n => n >= 1 && n <= 4) && f[0] + f[1] + f[2] === 7 ? f : [2,4,1]; }
+function spots(t, full) {
+  const [d, m, fw] = shape(t), Y = full ? {D:300, M:210, F:100} : {D:488, M:415, F:345}, out = [{l:'GK', x:150, y: full ? 378 : 552}];
+  [['D',d],['M',m],['F',fw]].forEach(([k,n]) => ROWX[n].forEach((x,i) => out.push({l:LBL[k][n][i], x, y:Y[k] - (n === 4 && (i === 0 || i === 3) ? 14 : 0)})));
+  return out;
+}
 function pitchLines(h) { return `<rect width="300" height="${h}" rx="10" fill="#2e7a3a"/><g fill="none" stroke="rgba(255,255,255,.65)" stroke-width="1.5"><rect x="12" y="12" width="276" height="${h-24}" rx="2"/><line x1="12" y1="${h/2}" x2="288" y2="${h/2}"/><circle cx="150" cy="${h/2}" r="34"/><rect x="80" y="12" width="140" height="52"/><rect x="80" y="${h-64}" width="140" height="52"/></g>`; }
 function badge(x, y, e, n) { return `<circle cx="${x}" cy="${y}" r="9" fill="#fff"/><text x="${x}" y="${y+3.5}" text-anchor="middle" font-size="10">${e}</text>${n > 1 ? `<text x="${x+11}" y="${y-4}" font-size="11" font-weight="800" fill="#fff" ${FB}>${n}</text>` : ''}`; }
 function dot(t, id, pos, x, y, m) { if (!id) return ''; const c = T[t], g = (m && m[id]) || {};
@@ -109,8 +115,9 @@ function matchLineups(f) {
   const H = lineup(f.home), A = lineup(f.away); if (!H.has && !A.has) return '';
   const fin = f.status === 'final', m = {}, get = id => m[id] || (m[id] = {g:0, a:0});
   if (fin) f.goals.forEach(g => { if (g.s) get(g.s).g++; if (g.a) get(g.a).a++; });
-  const top = H.xi.map((p,i) => { const [x,y] = HALF[SHAPE[i]]; return dot(f.home, p, SHAPE[i], 300-x, 600-y, m); }).join('');
-  const bot = A.xi.map((p,i) => { const [x,y] = HALF[SHAPE[i]]; return dot(f.away, p, SHAPE[i], x, y, m); }).join('');
+  const sh = spots(f.home, false), sa = spots(f.away, false);
+  const top = H.xi.map((p,i) => dot(f.home, p, sh[i].l, 300 - sh[i].x, 600 - sh[i].y, m)).join('');
+  const bot = A.xi.map((p,i) => dot(f.away, p, sa[i].l, sa[i].x, sa[i].y, m)).join('');
   return `<section class="sec"><h2>${fin ? 'Lineups' : 'Probable lineups'}</h2><div class="lu card">
   <a class="lu-h" href="#team-${T[f.home].slug}">${crest(f.home)}<b>${tname(f.home)}</b><span class="tag">${esc(T[f.home].formation)}</span></a>
   <svg viewBox="0 0 300 600" role="img" aria-label="Lineups">${pitchLines(600)}${top}${bot}</svg>
@@ -148,6 +155,7 @@ V.home = () => {
   <section class="sec"><div class="sec-head"><h2>Latest results</h2><a href="#fixtures">All fixtures →</a></div>
     ${latest.length ? `<div class="fxlist">${latest.map(f => fxRow(f)).join('')}</div>` : empty('No games played yet.')}</section>
   <section class="sec"><div class="sec-head"><h2>Table</h2><a href="#table">Full table →</a></div>${tableHTML(table().slice(0, 4), true)}</section>
+  ${MEDIA.some(x => x.kind === 'photo') ? `<section class="sec"><div class="sec-head"><h2>Latest photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${MEDIA.filter(x => x.kind === 'photo').slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><div class="sec-head"><h2>Leaders</h2><a href="#stats">All stats →</a></div>
     <div class="lead2">${ld('Top scorer', g ? g.g : 0, g)}${ld('Most assists', a ? a.a : 0, a)}</div></section>
   <section class="sec"><h2>How a result goes live</h2>
@@ -211,13 +219,14 @@ V.team = slug => {
   const res = fx.filter(f => f.status === 'final').sort((a,b) => b.date - a.date), up = fx.filter(f => f.status !== 'final').sort((a,b) => a.date - b.date).slice(0, 3);
   const {xi, rest, has} = lineup(id);
   return `<section class="thead">${crest(id, 'lg')}<div><h1>${esc(t.name)}</h1><p class="muted">${r.gp ? `${ord(pos)} · ` : ''}${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts</p>
+  ${r.form.length ? `<span class="form" style="justify-content:flex-start;margin-top:6px">${r.form.slice(-5).map(x => `<span class="fd ${x}">${x}</span>`).join('')}</span>` : ''}
   <button class="btn ${MYTEAM === id ? '' : 'ghost'} sm" data-act="follow" data-v="${id}" style="margin-top:8px">${MYTEAM === id ? '★ My team' : '☆ Set as my team'}</button></div></section>
   <section class="tinfo">
     <div class="card pad kit">${jersey(t)}<div><span class="k">Kit</span><p>${t.todo ? 'Colours to confirm' : 'Home colours'}</p></div></div>
     <div class="card pad rep"><span class="k">Team rep</span>${t.rep ? `<b>${esc(t.rep)}</b>` : ''}${t.email ? `<span class="row" style="gap:8px"><span class="email">${esc(t.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(t.email)}">Copy</button></span>` : ''}</div>
   </section>
   <section class="sec"><div class="sec-head"><h2>Squad</h2><span class="tag">${esc(t.formation)}</span></div>
-    ${has ? `<figure class="pitch"><svg viewBox="0 0 300 430" role="img" aria-label="${esc(t.name)} squad">${pitchLines(430)}${xi.map((p,i) => { const [x,y] = FULL[SHAPE[i]]; return dot(id, p, SHAPE[i], x, y, m); }).join('')}</svg></figure>
+    ${has ? `<figure class="pitch"><svg viewBox="0 0 300 430" role="img" aria-label="${esc(t.name)} squad">${pitchLines(430)}${(() => { const sp = spots(id, true); return xi.map((p,i) => dot(id, p, sp[i].l, sp[i].x, sp[i].y, m)).join(''); })()}</svg></figure>
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
   <section class="sec"><h2>Next matches</h2>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
@@ -239,9 +248,10 @@ V.match = code => {
     return hh.length ? `<section class="sec"><h2>Head-to-head this season</h2><div class="fxlist">${hh.map(x => fxRow(x)).join('')}</div></section>` : ''; })()}
   ${ph.length ? `<section class="sec"><h2>Photos & highlights</h2><div class="gal">${ph.map(mediaTile).join('')}</div></section>` : ''}`;
 };
+const mLabel = x => { const f = FX.find(y => y.id === x.fixture_id); return f ? `${T[f.home].short} ${f.status === 'final' ? f.hs + '–' + f.as : 'v'} ${T[f.away].short} · ${fmtDay(f.date)}` : ''; };
 const mediaTile = x => x.kind === 'photo'
-  ? `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:#1a2822 url('${esc(x.url)}') center/cover"><span>${esc(x.caption || '')}</span></a>`
-  : `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#17734a,#13201a)"><span>▶ Highlights<small>${esc(x.caption || 'Watch on Instagram')}</small></span></a>`;
+  ? `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:#1a2822 url('${esc(x.url)}') center/cover"><span>${esc(x.caption || '')}<small>${mLabel(x)}</small></span></a>`
+  : `<a class="ph" href="${esc(x.url)}" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#17734a,#13201a)"><span>▶ Highlights<small>${esc(x.caption || mLabel(x))}</small></span></a>`;
 V.gallery = () => `<section class="sec"><h1>Gallery</h1><p class="muted">Selected photos and highlights by KB Media, posted when available and always with player consent.</p>
   ${MEDIA.length ? `<div class="gal">${MEDIA.slice(0, 24).map(mediaTile).join('')}</div>` : empty('No photos yet. Check back during the season.')}</section>`;
 V.partners = () => `<section class="sec"><h1>Partners</h1>
@@ -327,6 +337,16 @@ V.admin = () => {
     <div class="row"><input class="sel" id="mr-h" type="number" min="0" max="30" inputmode="numeric" placeholder="Home" style="width:90px"><span>–</span><input class="sel" id="mr-a" type="number" min="0" max="30" inputmode="numeric" placeholder="Away" style="width:90px"><button class="btn" data-act="manual">Save result</button></div></div>` : empty('No past games are missing a result.')}</section>
   <section class="sec"><h2>Upcoming fixtures</h2><div class="card">${upcoming.map(f => `<div class="adm-fx"><span><b>${esc(T[f.home].short)} v ${esc(T[f.away].short)}</b> <span class="muted">· ${fmtDay(f.date)} ${fmtTime(f.date)}</span> ${f.status === 'postponed' ? '<span class="tag loss">Postponed</span>' : ''}</span>
     <button class="btn ghost sm" data-act="postpone" data-v="${f.id}">${f.status === 'postponed' ? 'Restore' : 'Postpone'}</button></div>`).join('') || '<p class="pad muted">None.</p>'}</div></section>
+  <section class="sec"><h2>Photos & highlights</h2><p class="small muted">Only post photos of players who agreed. Big photos are shrunk before upload.</p>
+    <div class="card pad" style="display:flex;flex-direction:column;gap:10px">
+      <label class="k" for="ph-fx">Match</label><select class="sel" id="ph-fx">${FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
+      <label class="k" for="ph-files">Photos</label><input class="sel" id="ph-files" type="file" accept="image/*" multiple>
+      <input class="sel" id="ph-cap" placeholder="Caption (optional)" maxlength="80">
+      <button class="btn" data-act="upload">Upload photos</button>
+      <label class="k" for="hl-url">Or a highlight link</label><input class="sel" id="hl-url" type="url" placeholder="https://instagram.com/…">
+      <button class="btn ghost" data-act="highlight">Add highlight link</button>
+    </div>
+    ${MEDIA.length ? `<div class="card">${MEDIA.slice(0, 10).map(x => `<div class="adm-fx"><span class="small">${x.kind === 'photo' ? '📷' : '▶'} ${mLabel(x)} ${esc(x.caption || '')}</span><button class="btn ghost sm" data-act="delmedia" data-v="${x.id}">${ADM.armed === x.id ? 'Tap to confirm' : 'Remove'}</button></div>`).join('')}</div>` : ''}</section>
   <section class="sec"><h2>Captain links</h2><p class="small muted">Send each link only to that team's captain or rep. Anyone with a link can report results for that team, and you still approve everything.</p>
     <div class="card">${ADM.tokens.filter(x => T[x.team_id]).map(x => `<div class="adm-fx"><span class="row" style="gap:8px;min-width:0">${crest(x.team_id)}<b>${tname(x.team_id)}</b></span><button class="btn ghost sm" data-act="copy" data-v="${base}?c=${x.token}#captain">Copy link</button></div>`).join('')}</div></section>`;
 };
@@ -345,6 +365,12 @@ async function admLoad() {
     }
   }
   render(false);
+}
+async function shrink(file) {
+  try { const img = await createImageBitmap(file); const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(b => r(b || file), 'image/jpeg', .82)); } catch (e) { return file; }
 }
 async function refresh() { await load(); await admLoad(); }
 
@@ -392,6 +418,31 @@ async function act(a, v, el) {
   else if (a === 'postpone') {
     const f = FX.find(x => x.id === v); const r = await sb.from('fixtures').update({status: f.status === 'postponed' ? 'scheduled' : 'postponed'}).eq('id', v);
     if (r.error) { toast(r.error.message); return; } await refresh(); return;
+  }
+  else if (a === 'upload') {
+    const files = [...($('#ph-files').files || [])], fid = $('#ph-fx').value, f = FX.find(x => x.id === fid), cap = $('#ph-cap').value.trim();
+    if (!files.length) { toast('Choose at least one photo'); return; }
+    el.disabled = true;
+    for (let i = 0; i < files.length; i++) {
+      toast(`Uploading ${i + 1} of ${files.length}…`);
+      const blob = await shrink(files[i]), path = `${f.code}/${Date.now()}-${i}.jpg`;
+      const up = await sb.storage.from('media').upload(path, blob, {contentType: 'image/jpeg'});
+      if (up.error) { toast(up.error.message); el.disabled = false; return; }
+      const url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+      const ins = await sb.from('media').insert({fixture_id: fid, kind: 'photo', url, caption: cap || null});
+      if (ins.error) { toast(ins.error.message); el.disabled = false; return; }
+    }
+    toast('Photos added'); await refresh(); return;
+  }
+  else if (a === 'highlight') {
+    const url = $('#hl-url').value.trim(); if (!/^https:\/\//.test(url)) { toast('Paste a full https:// link'); return; }
+    const r = await sb.from('media').insert({fixture_id: $('#ph-fx').value, kind: 'highlight', url}); if (r.error) { toast(r.error.message); return; }
+    toast('Highlight added'); await refresh(); return;
+  }
+  else if (a === 'delmedia') {
+    if (ADM.armed !== v) { ADM.armed = v; render(false); return; }
+    ADM.armed = null; const r = await sb.from('media').delete().eq('id', v); if (r.error) { toast(r.error.message); return; }
+    toast('Removed'); await refresh(); return;
   }
   else if (a === 'signout') { await sb.auth.signOut(); ADM = {session:null, isAdmin:false, subs:[], tokens:[], names:{}, err:'', loaded:true}; }
   else return;
