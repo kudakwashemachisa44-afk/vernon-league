@@ -11,3 +11,6 @@ create index if not exists cards_fixture_idx on cards (fixture_id);
 alter table cards enable row level security;
 create policy admin_all on cards for all to authenticated using (is_admin()) with check (is_admin());
 create policy public_read on cards for select to anon, authenticated using (true);
+
+-- Gallery photos can belong to a team instead of a match
+alter table media add column if not exists team_id uuid references teams on delete set null;
