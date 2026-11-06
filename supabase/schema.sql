@@ -54,7 +54,8 @@ create table players (
   public_ok boolean not null default true,   -- player can hide name and stats
   photo_ok boolean not null default false,   -- photos only with consent
   active boolean not null default true,
-  sort int not null default 0
+  sort int not null default 0,
+  is_placeholder boolean not null default false  -- sample names until the real roster arrives
 );
 
 create table fixtures (
@@ -145,7 +146,7 @@ end $$;
 -- Hidden players appear with a null name; their goals still count.
 create view public_players as
   select id, team_id, case when public_ok then display_name end as name,
-         position, lineup_slot, active, sort
+         position, lineup_slot, active, sort, is_placeholder
   from players;
 
 create view standings as
@@ -194,7 +195,7 @@ begin
     'team', (select to_jsonb(x) from (select id, name, short_name, color_primary, color_secondary
                                      from teams where id = v_team) x),
     'players', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'name', display_name, 'position', position) order by sort)
-                         from players where team_id = v_team and active), '[]'),
+                         from players where team_id = v_team and active and not is_placeholder), '[]'),
     'fixtures', coalesce((select jsonb_agg(to_jsonb(f) order by f.kickoff desc) from (
         select fx.id, fx.kickoff, fx.week, fx.home_team_id, fx.away_team_id, fx.status, fx.home_goals, fx.away_goals
         from fixtures fx
