@@ -3,7 +3,7 @@ const CFG = window.LEAGUE_CONFIG || {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let sb = null;
-let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SEASON = null, LEAGUE = null;
+let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SUSP = [], SEASON = null, LEAGUE = null;
 
 /* ---------- data ---------- */
 async function load() {
@@ -20,12 +20,13 @@ async function load() {
   t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation, badge:x.badge_url}; SLUG[x.slug] = x.id; });
   TIDS = Object.keys(T);
   const fids = f.data.map(x => x.id);
-  const [p, g, sp, md, cd] = await Promise.all([
+  const [p, g, sp, md, cd, su] = await Promise.all([
     sb.from('public_players').select('*').in('team_id', TIDS).eq('active', true).order('sort'),
     fids.length ? sb.from('goals').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('sponsors').select('*').eq('season_id', SEASON.id).order('sort'),
     sb.from('media').select('*').order('created_at', {ascending:false}).limit(300),
-    fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]}
+    fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]},
+    sb.from('suspensions').select('*').eq('season_id', SEASON.id).order('created_at')
   ]);
   P = {}; SQUAD = {}; TIDS.forEach(id => SQUAD[id] = []);
   (p.data||[]).forEach(x => { P[x.id] = {id:x.id, team:x.team_id, name:x.name, hidden:!x.name, pos:x.position||'', slot:x.lineup_slot, ph:!!x.is_placeholder}; SQUAD[x.team_id].push(x.id); });
@@ -34,7 +35,7 @@ async function load() {
   const byId = Object.fromEntries(FX.map(x => [x.id, x]));
   (g.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].goals.push({t:x.team_id, s:x.scorer_id, a:x.assist_id}));
   (cd.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].cards.push({t:x.team_id, p:x.player_id, c:x.color}));
-  SPONSORS = sp.data || []; MEDIA = md.data || [];
+  SPONSORS = sp.data || []; MEDIA = md.data || []; SUSP = su.data || [];
 }
 
 /* ---------- league logic ---------- */
@@ -57,6 +58,29 @@ function leaders() { const m = {}, get = id => m[id] || (m[id] = {id, g:0, a:0})
   FX.forEach(f => { if (f.status !== 'final') return; f.goals.forEach(g => { if (g.s && P[g.s]) get(g.s).g++; if (g.a && P[g.a]) get(g.a).a++; }); });
   return Object.values(m); }
 const SHAPE = ['GK','LCB','RCB','LW','LCM','RCM','RW','ST'];
+/* ---------- discipline: bans come from cards (automatic) and from the admin (misconduct, longer reds) ---------- */
+const RULES = Object.assign({redGames: 1, yellowLimit: 3, yellowGames: 1}, CFG.discipline || {});
+const REASON = {red: 'Red card', misconduct: 'Misconduct', ban: 'League ban', other: 'Other'};
+const gamesAfter = (t, d) => FX.filter(f => (f.home === t || f.away === t) && f.status !== 'postponed' && f.date > d).sort((a,b) => a.date - b.date);
+function bans() {
+  const out = [], byId = Object.fromEntries(FX.map(f => [f.id, f])), over = {}, yc = {};
+  SUSP.forEach(s => { if (s.reason === 'red' && s.fixture_id) over[s.player_id + '|' + s.fixture_id] = s; });
+  [...FX].sort((a,b) => a.date - b.date).forEach(f => f.cards.forEach(c => { if (!c.p || !P[c.p]) return;
+    if (c.c === 'red') { const o = over[c.p + '|' + f.id]; if (o) o.used = true;
+      out.push({id: o ? o.id : null, p: c.p, t: c.t, f, games: o ? o.games : RULES.redGames, why: 'Red card', kind: 'red', note: o && o.note, auto: !o}); }
+    else { yc[c.p] = (yc[c.p] || 0) + 1;
+      if (RULES.yellowLimit && yc[c.p] % RULES.yellowLimit === 0) out.push({p: c.p, t: c.t, f, games: RULES.yellowGames, why: `${yc[c.p]} yellow cards`, kind: 'yellow', auto: true}); }
+  }));
+  SUSP.forEach(s => { if (s.used || !P[s.player_id]) return;
+    out.push({id: s.id, p: s.player_id, t: s.team_id, f: byId[s.fixture_id] || null, from: new Date(s.created_at), games: s.games, why: REASON[s.reason] || 'Other', kind: s.reason, note: s.note, auto: false}); });
+  SUSP.forEach(s => delete s.used);
+  out.forEach(x => { const g = gamesAfter(x.t, x.f ? x.f.date : x.from), done = g.filter(played).length;
+    x.served = x.games == null ? done : Math.min(done, x.games); x.left = x.games == null ? Infinity : Math.max(0, x.games - done);
+    x.misses = g.filter(f => !played(f)).slice(0, x.left === Infinity ? 99 : x.left); x.back = x.games == null ? null : g[x.games] || null; x.date = x.f ? x.f.date : x.from; });
+  YC = yc; return out.sort((a,b) => b.date - a.date);
+}
+let YC = {};
+const outFor = f => bans().filter(x => x.misses.some(m => m.id === f.id));
 function lineup(t) { const sq = SQUAD[t] || []; const xi = SHAPE.map(s => sq.find(id => P[id].slot === s)).filter(Boolean); return {xi, rest: sq.filter(id => !xi.includes(id)), has: xi.length > 0}; }
 
 /* ---------- helpers ---------- */
@@ -174,7 +198,7 @@ V.home = () => {
     </div></section>
   <section class="sec"><span class="k">League partners</span><div class="partners">${kbCard()}${SPONSORS.map(sponsorCard).join('')}<a class="slot" href="#partners" style="text-decoration:none">Your business here · partner slots open</a></div></section>`;
 };
-const sponsorCard = s => `<a class="card" href="${esc(s.link_url || '#partners')}" target="_blank" rel="noopener">${s.logo_url ? `<img src="${esc(s.logo_url)}" alt="${esc(s.name)}" style="max-height:48px;object-fit:contain">` : `<b>${esc(s.name)}</b>`}<span>${esc(s.tier)} partner</span></a>`;
+const sponsorCard = s => `<a class="card" href="#partner-${s.id}">${s.logo_url ? `<img src="${esc(s.logo_url)}" alt="${esc(s.name)}" style="max-height:48px;object-fit:contain">` : `<b>${esc(s.name)}</b>`}<span>${esc(s.tier)} partner</span></a>`;
 
 let fxWeek = null, fxTeam = 'all';
 V.fixtures = () => {
@@ -224,8 +248,30 @@ function discHTML() {
   const list = Object.values(m).sort((a,b) => b.r - a.r || b.y - a.y);
   if (!list.length) return empty('No cards yet. Cards come from the ref\'s match sheet.');
   return `<ol class="rank card">${list.map((x,i) => `<li><span class="rn">${i+1}</span><span class="who">${crest(P[x.id].team)}<span><b class="nm">${pname(x.id)}</b><small>${tname(P[x.id].team)}</small></span></span><span class="v" style="font-size:16px">${x.y ? `<i class="ci y"></i>${x.y}` : ''}${x.r ? `<i class="ci r"></i>${x.r}` : ''}</span></li>`).join('')}</ol>
-  <p class="small muted">Suspensions follow the league's own rules. This list just keeps count.</p>`;
+  <p class="small muted">Cards lead to bans automatically. <a href="#suspensions">See who's suspended →</a></p>`;
 }
+const vs = (x, f) => `${fmtDay(f.date)} vs ${tname(f.home === x.t ? f.away : f.home)}`;
+function banCard(x) {
+  const total = x.games == null ? '' : `<span class="bar"><i style="width:${x.games ? Math.round(100 * x.served / x.games) : 100}%"></i></span><small class="muted">${x.served} of ${x.games} game${x.games === 1 ? '' : 's'} served</small>`;
+  const miss = x.misses.length ? `<p class="small"><b>Misses:</b> ${x.misses.slice(0, 2).map(f => vs(x, f)).join(', ')}${x.misses.length > 2 ? ` +${x.misses.length - 2} more` : ''}</p>` : '';
+  const back = x.games == null ? '<p class="small"><b>Back:</b> until further notice</p>' : x.back ? `<p class="small"><b>Back:</b> ${vs(x, x.back)}</p>` : '<p class="small"><b>Back:</b> next season</p>';
+  return `<div class="card pad ban"><div class="row" style="gap:10px">${crest(x.t)}<span style="display:flex;flex-direction:column;min-width:0;flex:1"><b class="nm">${pname(x.p)}</b><small class="muted">${tname(x.t)}</small></span><span class="tag loss">${x.kind === 'yellow' ? '<i class="ci y"></i>' : x.kind === 'red' ? '<i class="ci r"></i>' : ''}${esc(x.why)}</span></div>
+  ${total}${miss}${back}${x.note ? `<p class="small muted">${esc(x.note)}</p>` : ''}${x.f ? `<p class="small muted">From ${vs(x, x.f)}</p>` : ''}</div>`;
+}
+V.suspensions = () => {
+  const all = bans(), now = all.filter(x => x.left > 0), past = all.filter(x => x.left === 0).slice(0, 12);
+  const warn = RULES.yellowLimit > 1 ? Object.entries(YC).filter(([p, n]) => n % RULES.yellowLimit === RULES.yellowLimit - 1 && !now.some(x => x.p === p)) : [];
+  return `<section class="sec"><h1>Suspensions</h1><p class="muted">Who's out, for how long, and when they're back. Updated from each game's match sheet.</p></section>
+  <section class="sec"><h2>Suspended now (${now.length})</h2>${now.length ? `<div class="bans">${now.map(banCard).join('')}</div>` : empty('Nobody is suspended right now.')}</section>
+  ${warn.length ? `<section class="sec"><h2>One yellow from a ban</h2><ol class="rank card">${warn.map(([p, n]) => `<li><span class="who">${crest(P[p].team)}<span><b class="nm">${pname(p)}</b><small>${tname(P[p].team)}</small></span></span><span class="v" style="font-size:16px"><i class="ci y"></i>${n}</span></li>`).join('')}</ol></section>` : ''}
+  <section class="sec"><h2>How bans work</h2><div class="card pad" style="display:flex;flex-direction:column;gap:8px">
+    <p><i class="ci r"></i><b>Red card:</b> at least ${RULES.redGames} game${RULES.redGames === 1 ? '' : 's'}. Serious incidents can mean more.</p>
+    ${RULES.yellowLimit ? `<p><i class="ci y"></i><b>Every ${ord(RULES.yellowLimit)} yellow:</b> ${RULES.yellowGames} game${RULES.yellowGames === 1 ? '' : 's'}.</p>` : ''}
+    <p><b>Referee abuse (zero tolerance):</b> 2–5 games for a first offence, 6–10 for a second, then removal from the centre.</p>
+    <p class="small muted">A ban counts down one game each time the player's team plays. Postponed games don't count. The league has the final say on every ban.</p></div></section>
+  ${past.length ? `<section class="sec"><h2>Served this season</h2><ol class="rank card">${past.map(x => `<li><span class="who">${crest(x.t)}<span><b class="nm">${pname(x.p)}</b><small>${esc(x.why)} · ${x.games} game${x.games === 1 ? '' : 's'}</small></span></span><span class="tag final">Served</span></li>`).join('')}</ol></section>` : ''}`;
+};
+const outList = (list, label) => list.length ? `<section class="sec"><h2>${label}</h2><ol class="rank card">${list.map(x => `<li><span class="who">${crest(x.t)}<span><b class="nm">${pname(x.p)}</b><small>${tname(x.t)} · ${esc(x.why)}${x.games == null ? ' · until further notice' : ` · ${x.left} game${x.left === 1 ? '' : 's'} left`}</small></span></span><a class="tag loss" href="#suspensions" style="text-decoration:none">Suspended</a></li>`).join('')}</ol></section>` : '';
 V.teams = () => `<section class="sec"><h1>Teams</h1><div class="more">${TIDS.map(t => `<a class="card" href="#team-${T[t].slug}" style="flex-direction:row;align-items:center;gap:12px">${crest(t, 'md')}<b class="nm" style="font:700 18px var(--display);text-transform:uppercase">${tname(t)}</b></a>`).join('')}</div></section>`;
 V.team = slug => {
   const id = SLUG[slug], t = T[id]; if (!t) return notFound();
@@ -244,6 +290,7 @@ V.team = slug => {
     ${has ? `<figure class="pitch"><svg viewBox="0 0 300 430" role="img" aria-label="${esc(t.name)} squad">${pitchLines(430)}${(() => { const sp = spots(id, true); return xi.map((p,i) => dot(id, p, sp[i].l, sp[i].x, sp[i].y, m)).join(''); })()}</svg></figure>
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
+  ${outList(bans().filter(x => x.t === id && x.left > 0), 'Unavailable')}
   <section class="sec"><div class="sec-head"><h2>Next matches</h2><button class="btn ghost sm" data-act="ics" data-v="${id}">📅 Add to calendar</button></div>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
   ${teamMedia(id).length ? `<section class="sec"><div class="sec-head"><h2>Photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${teamMedia(id).slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><h2>Results</h2>${res.length ? `<div class="fxlist">${res.map(f => fxRow(f)).join('')}</div>` : empty('No results yet.')}</section>`;
@@ -262,6 +309,7 @@ V.match = code => {
     ${fin ? `<div class="big-sc">${f.hs}<span>–</span>${f.as}</div>` : `<div class="big-ko">${fmtTime(f.date)}</div>`}
     <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a>${scorers}${cardsBlock}</div>
   <div class="row" style="justify-content:center">${pill(f)}${fin ? `<button class="btn sm" data-act="card" data-v="${f.code}">Share score card</button>` : ''}<button class="btn ghost sm" data-act="share" data-v="${f.code}">Share link</button></div></section>
+  ${!fin ? outList(outFor(f), 'Suspended for this game') : ''}
   ${matchLineups(f)}
   ${(() => { const hh = FX.filter(x => x.id !== f.id && ((x.home === f.home && x.away === f.away) || (x.home === f.away && x.away === f.home))).sort((a,b) => a.date - b.date);
     return hh.length ? `<section class="sec"><h2>Head-to-head this season</h2><div class="fxlist">${hh.map(x => fxRow(x)).join('')}</div></section>` : ''; })()}
@@ -269,7 +317,7 @@ V.match = code => {
 };
 const IG = 'https://instagram.com/kbmedia.ca';
 const LOGO = 'kbmedia-logo.png', LOGO_IMG = new Image(); LOGO_IMG.src = LOGO;
-const kbCard = () => `<a class="card kb" href="${esc(CFG.booking || IG)}" target="_blank" rel="noopener"><img src="kbmedia-logo-128.png" alt="KB Media logo" width="48" height="48"><span><span class="k">Media partner</span><b>KB Media</b><small>Match photos, highlights and this website</small></span></a>`;
+const kbCard = () => `<a class="card kb" href="#partner-kbmedia"><img src="kbmedia-logo-128.png" alt="KB Media logo" width="48" height="48"><span><span class="k">Media partner</span><b>KB Media</b><small>Match photos, highlights and this website</small></span></a>`;
 const mLabel = x => { const f = FX.find(y => y.id === x.fixture_id); if (f) return `${T[f.home].short} ${f.status === 'final' ? f.hs + '–' + f.as : 'v'} ${T[f.away].short} · ${fmtDay(f.date)}`; return x.team_id && T[x.team_id] ? T[x.team_id].name : ''; };
 const mediaTile = x => x.kind === 'photo'
   ? `<button class="ph" data-act="view" data-v="${x.id}" style="background:#1a2822 url('${esc(x.url)}') center/cover" aria-label="Open photo"><span>${esc(x.caption || '')}<small>${mLabel(x)}</small></span></button>`
@@ -301,6 +349,23 @@ V.partners = () => `<section class="sec"><h1>Partners</h1>
     <div class="card tier"><span class="k">Matchday partner</span><span class="pr">$150</span><span class="small muted">per season · 2 spots</span><ul><li>Logo on fixtures and results</li><li>Link to your website</li></ul></div>
     <div class="card tier"><span class="k">Supporter</span><span class="pr">$100</span><span class="small muted">per season</span><ul><li>Logo on the partner wall</li><li>Link to your website</li></ul></div>
   </div><p class="small">Interested? <a href="https://instagram.com/kbmedia.ca" target="_blank" rel="noopener">Message KB Media on Instagram</a>.</p></section>`;
+const KB = {name: 'KB Media', tier: 'Media partner',
+  about: 'KB Media is a sports and portrait photography studio based in Vernon, run by a player in this league. It shoots soccer and baseball matchdays, team photos, portraits and events across the Okanagan.',
+  role: ['Match photos and highlight reels from league games', 'Built and runs this website: results, the table, stats and suspensions', 'Weekly score cards and Golden Boot graphics for teams to share']};
+V.partner = id => {
+  const kb = id === 'kbmedia', s = kb ? null : SPONSORS.find(x => x.id === id); if (!kb && !s) return notFound();
+  const name = kb ? KB.name : s.name, tier = kb ? KB.tier : `${s.tier[0].toUpperCase()}${s.tier.slice(1)} partner`;
+  const about = kb ? KB.about : s.about, role = kb ? KB.role : String(s.role || '').split('\n').map(x => x.trim()).filter(Boolean);
+  const logo = kb ? 'kbmedia-logo.png' : s.logo_url;
+  const links = kb ? `${CFG.booking ? `<a class="btn" href="${esc(CFG.booking)}" target="_blank" rel="noopener">Book a shoot</a>` : ''}<a class="btn ghost" href="${IG}" target="_blank" rel="noopener">Instagram</a><a class="btn ghost" href="#gallery">League gallery</a>`
+    : s.link_url ? `<a class="btn" href="${esc(s.link_url)}" target="_blank" rel="noopener">Visit website</a>` : '';
+  return `<section class="sec"><a href="#partners" class="small">← All partners</a>
+  <div class="card pad partner">${logo ? `<img src="${esc(logo)}" alt="${esc(name)} logo" width="96" height="96">` : ''}<div><span class="k">${esc(tier)}</span><h1>${esc(name)}</h1></div></div>
+  ${about ? `<p>${esc(about)}</p>` : ''}
+  ${role.length ? `<h2>How they support the league</h2><ul class="card pad ticks">${role.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+  <div class="row">${links}${kb && CFG.email ? `<span class="row" style="gap:8px"><span class="email">${esc(CFG.email)}</span><button class="btn ghost sm" data-act="copy" data-v="${esc(CFG.email)}">Copy email</button></span>` : ''}</div></section>
+  <section class="sec"><div class="card pad"><p class="small">Want your business here? <a href="#partners">See partner options →</a></p></div></section>`;
+};
 V.info = () => `<section class="sec"><h1>League info</h1><div class="card pad" style="display:flex;flex-direction:column;gap:12px">
   <p><b>Where.</b> ${esc(LEAGUE.venue || '')} (Vernon Toyota Indoor Sports Centre).</p>
   <p><b>When.</b> One game a week. Wednesday 7:00 or 8:40 PM, Saturday 6:00 or 7:40 PM. Games are 1 hour 20 minutes.</p>
@@ -310,6 +375,7 @@ V.info = () => `<section class="sec"><h1>League info</h1><div class="card pad" s
 V.more = () => `<section class="sec"><h1>More</h1><div class="more">
   <a class="card" href="#teams"><b>Teams</b><span>Squads, form and kits</span></a>
   <a class="card" href="#gallery"><b>Gallery</b><span>Match photos by KB Media</span></a>
+  <a class="card" href="#suspensions"><b>Suspensions</b><span>Who's out and when they're back</span></a>
   <a class="card" href="#partners"><b>Partners</b><span>Sponsor the league</span></a>
   <a class="card" href="#info"><b>League info</b><span>Times, format, privacy</span></a>
   <a class="card" href="#admin"><b>Admin</b><span>For the site admin</span></a></div></section>`;
@@ -372,6 +438,7 @@ V.admin = () => {
   return `<section class="sec"><div class="sec-head"><h1>Admin</h1><button class="btn ghost sm" data-act="signout">Sign out</button></div></section>
   <section class="sec"><h2>Waiting for approval (${ADM.subs.length})</h2>${ADM.subs.length ? ADM.subs.map(subCard).join('') : empty('All caught up.')}</section>
   ${sheetHTML()}
+  ${suspAdminHTML()}
   <section class="sec"><h2>Upcoming fixtures</h2><div class="card">${upcoming.map(f => `<div class="adm-fx"><span><b>${esc(T[f.home].short)} v ${esc(T[f.away].short)}</b> <span class="muted">· ${fmtDay(f.date)} ${fmtTime(f.date)}</span> ${f.status === 'postponed' ? '<span class="tag loss">Postponed</span>' : ''}</span>
     <button class="btn ghost sm" data-act="postpone" data-v="${f.id}">${f.status === 'postponed' ? 'Restore' : 'Postpone'}</button></div>`).join('') || '<p class="pad muted">None.</p>'}</div></section>
   <section class="sec"><h2>Photos & highlights</h2><p class="small muted">Only post photos of players who agreed. Big photos are shrunk before upload.</p>
@@ -410,6 +477,23 @@ function sheetHTML() {
     <span class="k">Cards</span>${cardRows}<button class="btn ghost sm" data-act="ms-cadd">+ Card</button>
     <button class="btn block" data-act="ms-save">Save match sheet</button>
   </div></section>`;
+}
+/* suspensions: adjust automatic red-card bans, add bans for misconduct */
+function suspAdminHTML() {
+  const nm = id => esc(ADM.names[id] || (P[id] && P[id].name) || 'Unknown');
+  const list = bans().filter(x => x.left > 0 || (Date.now() - x.date) < 21 * 864e5); ADM.su = list;
+  const row = (x, i) => `<div class="adm-fx" style="flex-wrap:wrap"><span class="small" style="flex:1;min-width:150px"><b>${nm(x.p)}</b> · ${esc(T[x.t].short)} · ${esc(x.why)}<br><span class="muted">${x.left === Infinity ? 'Until further notice' : x.left ? `${x.left} left (${x.served}/${x.games})` : 'Served'}${x.auto ? ' · automatic' : ''}</span></span>
+    ${x.kind === 'yellow' ? '<span class="small muted">Set by the yellow-card rule</span>' : `<input class="sel" id="su-g-${i}" type="number" min="0" max="50" inputmode="numeric" value="${x.games ?? ''}" placeholder="∞" style="width:64px" aria-label="Games"><button class="btn ghost sm" data-act="su-set" data-v="${i}">Save</button>${x.id ? `<button class="btn ghost sm" data-act="su-del" data-v="${x.id}">${ADM.armed === x.id ? 'Tap to confirm' : 'Remove'}</button>` : ''}`}</div>`;
+  const players = TIDS.map(t => `<optgroup label="${tname(t)}">${(SQUAD[t] || []).map(id => `<option value="${t}|${id}">${nm(id)}</option>`).join('')}</optgroup>`).join('');
+  return `<section class="sec"><h2>Suspensions</h2><p class="small muted">Red cards and every ${ord(RULES.yellowLimit)} yellow create bans automatically from the match sheet. Change a red card's length here, or add a ban for misconduct. Leave games blank for "until further notice".</p>
+  ${list.length ? `<div class="card">${list.map(row).join('')}</div>` : ''}
+  <div class="card pad" style="display:flex;flex-direction:column;gap:10px"><span class="k">Add a ban</span>
+    <select class="sel" id="su-p" aria-label="Player"><option value="">Choose player…</option>${players}</select>
+    <div class="row"><select class="sel" id="su-r" aria-label="Reason" style="flex:1"><option value="misconduct">Misconduct / ref abuse</option><option value="ban">League ban</option><option value="red">Red card (no card on sheet)</option><option value="other">Other</option></select>
+    <input class="sel" id="su-n" type="number" min="0" max="50" inputmode="numeric" placeholder="Games" style="width:90px" aria-label="Games"></div>
+    <select class="sel" id="su-f" aria-label="Incident match"><option value="">No match: ban starts from the next game</option>${FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
+    <input class="sel" id="su-note" maxlength="120" placeholder="Short public note (optional)">
+    <button class="btn" data-act="su-add">Add ban</button></div></section>`;
 }
 async function saveSheet(el) {
   const S = ADM.sheet, f = FX.find(x => x.id === S.fid);
@@ -494,6 +578,7 @@ const AFTER = {admin: () => { if (!ADM.loaded) admLoad(); }, captain: capLoad};
 function render(top) {
   const h = location.hash.slice(1) || (TOKEN ? 'captain' : 'home'); let html, nav = 'more';
   if (h.startsWith('team-')) html = V.team(h.slice(5));
+  else if (h.startsWith('partner-')) html = V.partner(h.slice(8));
   else if (h.startsWith('match-')) { html = V.match(h.slice(6)); nav = 'fixtures'; }
   else if (V[h]) { html = V[h](); nav = ['home','fixtures','table','stats'].includes(h) ? h : 'more'; }
   else html = notFound();
@@ -572,6 +657,24 @@ async function act(a, v, el) {
   else if (a === 'delmedia') {
     if (ADM.armed !== v) { ADM.armed = v; render(false); return; }
     ADM.armed = null; const r = await sb.from('media').delete().eq('id', v); if (r.error) { toast(r.error.message); return; }
+    toast('Removed'); await refresh(); return;
+  }
+  else if (a === 'su-add') {
+    const [t, p] = ($('#su-p').value || '|').split('|'), n = $('#su-n').value;
+    if (!p) { toast('Choose a player'); return; }
+    el.disabled = true;
+    const r = await sb.from('suspensions').insert({season_id: SEASON.id, player_id: p, team_id: t, fixture_id: $('#su-f').value || null, games: n === '' ? null : Math.max(0, parseInt(n, 10)), reason: $('#su-r').value, note: $('#su-note').value.trim() || null});
+    if (r.error) { toast(r.error.message); el.disabled = false; return; } toast('Ban added'); await refresh(); return;
+  }
+  else if (a === 'su-set') {
+    const x = ADM.su[+v], n = $('#su-g-' + v).value, games = n === '' ? null : Math.max(0, parseInt(n, 10));
+    const r = x.id ? await sb.from('suspensions').update({games}).eq('id', x.id)
+      : await sb.from('suspensions').insert({season_id: SEASON.id, player_id: x.p, team_id: x.t, fixture_id: x.f.id, games, reason: 'red'});
+    if (r.error) { toast(r.error.message); return; } toast('Ban updated'); await refresh(); return;
+  }
+  else if (a === 'su-del') {
+    if (ADM.armed !== v) { ADM.armed = v; render(false); return; }
+    ADM.armed = null; const r = await sb.from('suspensions').delete().eq('id', v); if (r.error) { toast(r.error.message); return; }
     toast('Removed'); await refresh(); return;
   }
   else if (a === 'signout') { await sb.auth.signOut(); ADM = {session:null, isAdmin:false, subs:[], tokens:[], names:{}, err:'', loaded:true}; }
