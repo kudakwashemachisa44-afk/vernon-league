@@ -6,6 +6,6 @@ window.LEAGUE_CONFIG = {
   league: 'vernon-mens-indoor',
   email: 'kbmedia.ca@gmail.com',     // bookings email shown on the gallery
   booking: 'https://kbmediaca.com/bookings',  // KB Media booking page (Book a shoot button)
-  // Card bans: red = games out; every Nth yellow = games out. Confirm with the league and change here.
-  discipline: { redGames: 1, yellowLimit: 3, yellowGames: 1 }
+  // Discipline: red card (or 2 yellows in a game) = redGames out + redFine; every yellowLimit-th yellow = yellowGames out.
+  discipline: { redGames: 1, redFine: 50, yellowLimit: 3, yellowGames: 1 }
 };

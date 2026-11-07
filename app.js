@@ -3,7 +3,7 @@ const CFG = window.LEAGUE_CONFIG || {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let sb = null;
-let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SUSP = [], SEASON = null, LEAGUE = null;
+let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SUSP = [], FINE = [], SEASON = null, LEAGUE = null;
 
 /* ---------- data ---------- */
 async function load() {
@@ -20,13 +20,14 @@ async function load() {
   t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation, badge:x.badge_url}; SLUG[x.slug] = x.id; });
   TIDS = Object.keys(T);
   const fids = f.data.map(x => x.id);
-  const [p, g, sp, md, cd, su] = await Promise.all([
+  const [p, g, sp, md, cd, su, fn] = await Promise.all([
     sb.from('public_players').select('*').in('team_id', TIDS).eq('active', true).order('sort'),
     fids.length ? sb.from('goals').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('sponsors').select('*').eq('season_id', SEASON.id).order('sort'),
     sb.from('media').select('*').order('created_at', {ascending:false}).limit(300),
     fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]},
-    sb.from('suspensions').select('*').eq('season_id', SEASON.id).order('created_at')
+    sb.from('suspensions').select('*').eq('season_id', SEASON.id).order('created_at'),
+    sb.from('fines').select('*').eq('season_id', SEASON.id).order('created_at')
   ]);
   P = {}; SQUAD = {}; TIDS.forEach(id => SQUAD[id] = []);
   (p.data||[]).forEach(x => { P[x.id] = {id:x.id, team:x.team_id, name:x.name, hidden:!x.name, pos:x.position||'', slot:x.lineup_slot, ph:!!x.is_placeholder}; SQUAD[x.team_id].push(x.id); });
@@ -35,7 +36,7 @@ async function load() {
   const byId = Object.fromEntries(FX.map(x => [x.id, x]));
   (g.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].goals.push({t:x.team_id, s:x.scorer_id, a:x.assist_id}));
   (cd.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].cards.push({t:x.team_id, p:x.player_id, c:x.color}));
-  SPONSORS = sp.data || []; MEDIA = md.data || []; SUSP = su.data || [];
+  SPONSORS = sp.data || []; MEDIA = md.data || []; SUSP = su.data || []; FINE = fn.data || [];
 }
 
 /* ---------- league logic ---------- */
@@ -58,29 +59,47 @@ function leaders() { const m = {}, get = id => m[id] || (m[id] = {id, g:0, a:0})
   FX.forEach(f => { if (f.status !== 'final') return; f.goals.forEach(g => { if (g.s && P[g.s]) get(g.s).g++; if (g.a && P[g.a]) get(g.a).a++; }); });
   return Object.values(m); }
 const SHAPE = ['GK','LCB','RCB','LW','LCM','RCM','RW','ST'];
-/* ---------- discipline: bans come from cards (automatic) and from the admin (misconduct, longer reds) ---------- */
-const RULES = Object.assign({redGames: 1, yellowLimit: 3, yellowGames: 1}, CFG.discipline || {});
-const REASON = {red: 'Red card', misconduct: 'Misconduct', ban: 'League ban', other: 'Other'};
+/* ---------- discipline ----------
+   Red card (or 2 yellows in one game) = sent off, ban of RULES.redGames, and a fine that must be paid before playing again.
+   Every RULES.yellowLimit-th yellow (outside 2-yellow games) = RULES.yellowGames ban.
+   The admin can lengthen a red-card ban, add bans (misconduct, altercations, rest of season) and fines, and mark fines paid. */
+const RULES = Object.assign({redGames: 1, yellowLimit: 3, yellowGames: 1, redFine: 50}, CFG.discipline || {});
+const REASON = {red: 'Red card', misconduct: 'Misconduct', altercation: 'Altercation', ban: 'League ban', season: 'Banned for the season', other: 'Other'};
 const gamesAfter = (t, d) => FX.filter(f => (f.home === t || f.away === t) && f.status !== 'postponed' && f.date > d).sort((a,b) => a.date - b.date);
+const money = n => '$' + (+n % 1 ? (+n).toFixed(2) : +n);
+let YC = {}, FINES = [];
 function bans() {
-  const out = [], byId = Object.fromEntries(FX.map(f => [f.id, f])), over = {}, yc = {};
+  const out = [], byId = Object.fromEntries(FX.map(f => [f.id, f])), over = {}, fo = {}, yc = {};
   SUSP.forEach(s => { if (s.reason === 'red' && s.fixture_id) over[s.player_id + '|' + s.fixture_id] = s; });
-  [...FX].sort((a,b) => a.date - b.date).forEach(f => f.cards.forEach(c => { if (!c.p || !P[c.p]) return;
-    if (c.c === 'red') { const o = over[c.p + '|' + f.id]; if (o) o.used = true;
-      out.push({id: o ? o.id : null, p: c.p, t: c.t, f, games: o ? o.games : RULES.redGames, why: 'Red card', kind: 'red', note: o && o.note, auto: !o}); }
-    else { yc[c.p] = (yc[c.p] || 0) + 1;
-      if (RULES.yellowLimit && yc[c.p] % RULES.yellowLimit === 0) out.push({p: c.p, t: c.t, f, games: RULES.yellowGames, why: `${yc[c.p]} yellow cards`, kind: 'yellow', auto: true}); }
-  }));
+  FINE.forEach(x => { if (x.reason === 'red' && x.fixture_id) fo[x.player_id + '|' + x.fixture_id] = x; });
+  const fines = [];
+  [...FX].sort((a,b) => a.date - b.date).forEach(f => {
+    const per = {}; f.cards.forEach(c => { if (!c.p || !P[c.p]) return; const k = per[c.p] || (per[c.p] = {t: c.t, y: 0, r: 0}); c.c === 'red' ? k.r++ : k.y++; });
+    Object.entries(per).forEach(([p, k]) => {
+      if (k.r || k.y >= 2) { const o = over[p + '|' + f.id], fr = fo[p + '|' + f.id]; if (o) o.used = true; if (fr) fr.used = true;
+        const fine = {id: fr ? fr.id : null, p, t: k.t, f, amount: fr ? fr.amount : RULES.redFine, status: fr ? fr.status : 'unpaid', why: 'Red card'};
+        if (fine.amount > 0) fines.push(fine);
+        out.push({id: o ? o.id : null, p, t: k.t, f, games: o ? o.games : RULES.redGames, why: k.r ? 'Red card' : 'Two yellows (sent off)', kind: 'red', note: o && o.note, auto: !o, fine: fine.amount > 0 ? fine : null}); }
+      else if (k.y) { yc[p] = (yc[p] || 0) + k.y;
+        if (RULES.yellowLimit && yc[p] >= RULES.yellowLimit) { yc[p] -= RULES.yellowLimit; out.push({p, t: k.t, f, games: RULES.yellowGames, why: `${RULES.yellowLimit} yellow cards`, kind: 'yellow', auto: true}); } }
+    });
+  });
   SUSP.forEach(s => { if (s.used || !P[s.player_id]) return;
-    out.push({id: s.id, p: s.player_id, t: s.team_id, f: byId[s.fixture_id] || null, from: new Date(s.created_at), games: s.games, why: REASON[s.reason] || 'Other', kind: s.reason, note: s.note, auto: false}); });
-  SUSP.forEach(s => delete s.used);
+    out.push({id: s.id, p: s.player_id, t: s.team_id, f: byId[s.fixture_id] || null, from: new Date(s.created_at), games: s.reason === 'season' ? null : s.games, why: REASON[s.reason] || 'Other', kind: s.reason, note: s.note, auto: false}); });
+  FINE.forEach(x => { if (x.used || !P[x.player_id]) return;
+    const fine = {id: x.id, p: x.player_id, t: x.team_id, f: byId[x.fixture_id] || null, amount: x.amount, status: x.status, why: REASON[x.reason] || 'Fine'}; fines.push(fine);
+    const ban = out.find(b => b.p === fine.p && !b.fine && b.f && fine.f && b.f.id === fine.f.id);
+    if (ban) ban.fine = fine; else out.push({p: fine.p, t: fine.t, f: fine.f, from: new Date(x.created_at), games: 0, why: `${fine.why} fine`, kind: 'fine', auto: false, fine}); });
+  SUSP.forEach(s => delete s.used); FINE.forEach(x => delete x.used);
   out.forEach(x => { const g = gamesAfter(x.t, x.f ? x.f.date : x.from), done = g.filter(played).length;
+    x.unpaid = !!(x.fine && x.fine.status === 'unpaid');
     x.served = x.games == null ? done : Math.min(done, x.games); x.left = x.games == null ? Infinity : Math.max(0, x.games - done);
-    x.misses = g.filter(f => !played(f)).slice(0, x.left === Infinity ? 99 : x.left); x.back = x.games == null ? null : g[x.games] || null; x.date = x.f ? x.f.date : x.from; });
-  YC = yc; return out.sort((a,b) => b.date - a.date);
+    x.on = x.left > 0 || x.unpaid;
+    x.misses = g.filter(f => !played(f)).slice(0, x.unpaid || x.left === Infinity ? 99 : x.left);
+    x.back = x.games == null || x.unpaid ? null : g[x.games] || null; x.date = x.f ? x.f.date : x.from; });
+  YC = yc; FINES = fines; return out.sort((a,b) => b.date - a.date);
 }
-let YC = {};
-const outFor = f => bans().filter(x => x.misses.some(m => m.id === f.id));
+const outFor = f => bans().filter(x => x.on && x.misses.some(m => m.id === f.id));
 function lineup(t) { const sq = SQUAD[t] || []; const xi = SHAPE.map(s => sq.find(id => P[id].slot === s)).filter(Boolean); return {xi, rest: sq.filter(id => !xi.includes(id)), has: xi.length > 0}; }
 
 /* ---------- helpers ---------- */
@@ -254,24 +273,26 @@ const vs = (x, f) => `${fmtDay(f.date)} vs ${tname(f.home === x.t ? f.away : f.h
 function banCard(x) {
   const total = x.games == null ? '' : `<span class="bar"><i style="width:${x.games ? Math.round(100 * x.served / x.games) : 100}%"></i></span><small class="muted">${x.served} of ${x.games} game${x.games === 1 ? '' : 's'} served</small>`;
   const miss = x.misses.length ? `<p class="small"><b>Misses:</b> ${x.misses.slice(0, 2).map(f => vs(x, f)).join(', ')}${x.misses.length > 2 ? ` +${x.misses.length - 2} more` : ''}</p>` : '';
-  const back = x.games == null ? '<p class="small"><b>Back:</b> until further notice</p>' : x.back ? `<p class="small"><b>Back:</b> ${vs(x, x.back)}</p>` : '<p class="small"><b>Back:</b> next season</p>';
+  const fine = x.fine ? `<p class="small">${x.unpaid ? `<span class="tag loss">${money(x.fine.amount)} fine unpaid</span> Can't play until it's paid.` : `<span class="tag final">${money(x.fine.amount)} fine ${x.fine.status}</span>`}</p>` : '';
+  const back = x.kind === 'season' ? '<p class="small"><b>Back:</b> next season</p>' : x.games == null ? '<p class="small"><b>Back:</b> until further notice</p>' : x.unpaid ? `<p class="small"><b>Back:</b> ${x.left ? `after ${x.left} more game${x.left === 1 ? '' : 's'}, ` : ''}once the fine is paid</p>` : x.back ? `<p class="small"><b>Back:</b> ${vs(x, x.back)}</p>` : '<p class="small"><b>Back:</b> next season</p>';
   return `<div class="card pad ban"><div class="row" style="gap:10px">${crest(x.t)}<span style="display:flex;flex-direction:column;min-width:0;flex:1"><b class="nm">${pname(x.p)}</b><small class="muted">${tname(x.t)}</small></span><span class="tag loss">${x.kind === 'yellow' ? '<i class="ci y"></i>' : x.kind === 'red' ? '<i class="ci r"></i>' : ''}${esc(x.why)}</span></div>
-  ${total}${miss}${back}${x.note ? `<p class="small muted">${esc(x.note)}</p>` : ''}${x.f ? `<p class="small muted">From ${vs(x, x.f)}</p>` : ''}</div>`;
+  ${x.games ? total : ''}${fine}${miss}${back}${x.note ? `<p class="small muted">${esc(x.note)}</p>` : ''}${x.f ? `<p class="small muted">From ${vs(x, x.f)}</p>` : ''}</div>`;
 }
 V.suspensions = () => {
-  const all = bans(), now = all.filter(x => x.left > 0), past = all.filter(x => x.left === 0).slice(0, 12);
+  const all = bans(), now = all.filter(x => x.on), past = all.filter(x => !x.on && x.games).slice(0, 12);
   const warn = RULES.yellowLimit > 1 ? Object.entries(YC).filter(([p, n]) => n % RULES.yellowLimit === RULES.yellowLimit - 1 && !now.some(x => x.p === p)) : [];
   return `<section class="sec"><h1>Suspensions</h1><p class="muted">Who's out, for how long, and when they're back. Updated from each game's match sheet.</p></section>
   <section class="sec"><h2>Suspended now (${now.length})</h2>${now.length ? `<div class="bans">${now.map(banCard).join('')}</div>` : empty('Nobody is suspended right now.')}</section>
   ${warn.length ? `<section class="sec"><h2>One yellow from a ban</h2><ol class="rank card">${warn.map(([p, n]) => `<li><span class="who">${crest(P[p].team)}<span><b class="nm">${pname(p)}</b><small>${tname(P[p].team)}</small></span></span><span class="v" style="font-size:16px"><i class="ci y"></i>${n}</span></li>`).join('')}</ol></section>` : ''}
   <section class="sec"><h2>How bans work</h2><div class="card pad" style="display:flex;flex-direction:column;gap:8px">
-    <p><i class="ci r"></i><b>Red card:</b> at least ${RULES.redGames} game${RULES.redGames === 1 ? '' : 's'}. Serious incidents can mean more.</p>
+    <p><i class="ci r"></i><b>Red card</b> (or two yellows in one game): sent off, out for at least ${RULES.redGames} game${RULES.redGames === 1 ? '' : 's'}${RULES.redFine ? `, and a ${money(RULES.redFine)} fine. The player can't play again until the fine is paid` : ''}.</p>
     ${RULES.yellowLimit ? `<p><i class="ci y"></i><b>Every ${ord(RULES.yellowLimit)} yellow:</b> ${RULES.yellowGames} game${RULES.yellowGames === 1 ? '' : 's'}.</p>` : ''}
     <p><b>Referee abuse (zero tolerance):</b> 2–5 games for a first offence, 6–10 for a second, then removal from the centre.</p>
+    <p><b>Altercations and serious misconduct:</b> longer bans, up to the rest of the season.</p>
     <p class="small muted">A ban counts down one game each time the player's team plays. Postponed games don't count. The league has the final say on every ban.</p></div></section>
   ${past.length ? `<section class="sec"><h2>Served this season</h2><ol class="rank card">${past.map(x => `<li><span class="who">${crest(x.t)}<span><b class="nm">${pname(x.p)}</b><small>${esc(x.why)} · ${x.games} game${x.games === 1 ? '' : 's'}</small></span></span><span class="tag final">Served</span></li>`).join('')}</ol></section>` : ''}`;
 };
-const outList = (list, label) => list.length ? `<section class="sec"><h2>${label}</h2><ol class="rank card">${list.map(x => `<li><span class="who">${crest(x.t)}<span><b class="nm">${pname(x.p)}</b><small>${tname(x.t)} · ${esc(x.why)}${x.games == null ? ' · until further notice' : ` · ${x.left} game${x.left === 1 ? '' : 's'} left`}</small></span></span><a class="tag loss" href="#suspensions" style="text-decoration:none">Suspended</a></li>`).join('')}</ol></section>` : '';
+const outList = (list, label) => list.length ? `<section class="sec"><h2>${label}</h2><ol class="rank card">${list.map(x => `<li><span class="who">${crest(x.t)}<span><b class="nm">${pname(x.p)}</b><small>${tname(x.t)} · ${esc(x.why)}${x.kind === 'season' ? ' · rest of season' : x.games == null ? ' · until further notice' : x.left ? ` · ${x.left} game${x.left === 1 ? '' : 's'} left` : ''}${x.unpaid ? ' · fine unpaid' : ''}</small></span></span><a class="tag loss" href="#suspensions" style="text-decoration:none">Suspended</a></li>`).join('')}</ol></section>` : '';
 V.teams = () => `<section class="sec"><h1>Teams</h1><div class="more">${TIDS.map(t => `<a class="card" href="#team-${T[t].slug}" style="flex-direction:row;align-items:center;gap:12px">${crest(t, 'md')}<b class="nm" style="font:700 18px var(--display);text-transform:uppercase">${tname(t)}</b></a>`).join('')}</div></section>`;
 V.team = slug => {
   const id = SLUG[slug], t = T[id]; if (!t) return notFound();
@@ -290,7 +311,7 @@ V.team = slug => {
     ${has ? `<figure class="pitch"><svg viewBox="0 0 300 430" role="img" aria-label="${esc(t.name)} squad">${pitchLines(430)}${(() => { const sp = spots(id, true); return xi.map((p,i) => dot(id, p, sp[i].l, sp[i].x, sp[i].y, m)).join(''); })()}</svg></figure>
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
-  ${outList(bans().filter(x => x.t === id && x.left > 0), 'Unavailable')}
+  ${outList(bans().filter(x => x.t === id && x.on), 'Unavailable')}
   <section class="sec"><div class="sec-head"><h2>Next matches</h2><button class="btn ghost sm" data-act="ics" data-v="${id}">📅 Add to calendar</button></div>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
   ${teamMedia(id).length ? `<section class="sec"><div class="sec-head"><h2>Photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${teamMedia(id).slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><h2>Results</h2>${res.length ? `<div class="fxlist">${res.map(f => fxRow(f)).join('')}</div>` : empty('No results yet.')}</section>`;
@@ -481,19 +502,24 @@ function sheetHTML() {
 /* suspensions: adjust automatic red-card bans, add bans for misconduct */
 function suspAdminHTML() {
   const nm = id => esc(ADM.names[id] || (P[id] && P[id].name) || 'Unknown');
-  const list = bans().filter(x => x.left > 0 || (Date.now() - x.date) < 21 * 864e5); ADM.su = list;
-  const row = (x, i) => `<div class="adm-fx" style="flex-wrap:wrap"><span class="small" style="flex:1;min-width:150px"><b>${nm(x.p)}</b> · ${esc(T[x.t].short)} · ${esc(x.why)}<br><span class="muted">${x.left === Infinity ? 'Until further notice' : x.left ? `${x.left} left (${x.served}/${x.games})` : 'Served'}${x.auto ? ' · automatic' : ''}</span></span>
-    ${x.kind === 'yellow' ? '<span class="small muted">Set by the yellow-card rule</span>' : `<input class="sel" id="su-g-${i}" type="number" min="0" max="50" inputmode="numeric" value="${x.games ?? ''}" placeholder="∞" style="width:64px" aria-label="Games"><button class="btn ghost sm" data-act="su-set" data-v="${i}">Save</button>${x.id ? `<button class="btn ghost sm" data-act="su-del" data-v="${x.id}">${ADM.armed === x.id ? 'Tap to confirm' : 'Remove'}</button>` : ''}`}</div>`;
+  const list = bans().filter(x => x.on || (Date.now() - x.date) < 21 * 864e5); ADM.su = list;
+  const fineCtl = (x, i) => !x.fine ? '' : `<span class="row" style="gap:6px;width:100%"><span class="tag ${x.fine.status === 'unpaid' ? 'loss' : 'final'}">${money(x.fine.amount)} ${x.fine.status}</span>
+    ${x.fine.status === 'unpaid' ? `<button class="btn sm" data-act="fi-set" data-v="${i}:paid">Mark paid</button><button class="btn ghost sm" data-act="fi-set" data-v="${i}:waived">Waive</button>` : `<button class="btn ghost sm" data-act="fi-set" data-v="${i}:unpaid">Undo</button>`}</span>`;
+  const row = (x, i) => `<div class="adm-fx" style="flex-wrap:wrap"><span class="small" style="flex:1;min-width:150px"><b>${nm(x.p)}</b> · ${esc(T[x.t].short)} · ${esc(x.why)}<br><span class="muted">${x.kind === 'season' ? 'Rest of season' : x.left === Infinity ? 'Until further notice' : x.left ? `${x.left} game${x.left === 1 ? '' : 's'} left (${x.served}/${x.games})` : x.games ? 'Ban served' : ''}${x.auto ? ' · automatic' : ''}</span></span>
+    ${x.kind === 'yellow' || x.kind === 'fine' || x.kind === 'season' ? '' : `<input class="sel" id="su-g-${i}" type="number" min="0" max="50" inputmode="numeric" value="${x.games ?? ''}" placeholder="∞" style="width:64px" aria-label="Games"><button class="btn ghost sm" data-act="su-set" data-v="${i}">Save</button>`}
+    ${x.id && x.kind !== 'fine' ? `<button class="btn ghost sm" data-act="su-del" data-v="${x.id}">${ADM.armed === x.id ? 'Tap to confirm' : 'Remove'}</button>` : ''}${fineCtl(x, i)}</div>`;
   const players = TIDS.map(t => `<optgroup label="${tname(t)}">${(SQUAD[t] || []).map(id => `<option value="${t}|${id}">${nm(id)}</option>`).join('')}</optgroup>`).join('');
-  return `<section class="sec"><h2>Suspensions</h2><p class="small muted">Red cards and every ${ord(RULES.yellowLimit)} yellow create bans automatically from the match sheet. Change a red card's length here, or add a ban for misconduct. Leave games blank for "until further notice".</p>
+  const matches = FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('');
+  return `<section class="sec"><h2>Suspensions & fines</h2><p class="small muted">From the match sheet: a red card or two yellows in one game means a ${RULES.redGames}-game ban and a ${money(RULES.redFine)} fine; every ${ord(RULES.yellowLimit)} yellow means ${RULES.yellowGames} game. Players with an unpaid fine show as suspended until you mark it paid. Leave games blank for "until further notice".</p>
   ${list.length ? `<div class="card">${list.map(row).join('')}</div>` : ''}
-  <div class="card pad" style="display:flex;flex-direction:column;gap:10px"><span class="k">Add a ban</span>
+  <div class="card pad" style="display:flex;flex-direction:column;gap:10px"><span class="k">Add a ban or fine</span>
     <select class="sel" id="su-p" aria-label="Player"><option value="">Choose player…</option>${players}</select>
-    <div class="row"><select class="sel" id="su-r" aria-label="Reason" style="flex:1"><option value="misconduct">Misconduct / ref abuse</option><option value="ban">League ban</option><option value="red">Red card (no card on sheet)</option><option value="other">Other</option></select>
+    <div class="row"><select class="sel" id="su-r" aria-label="Reason" style="flex:1"><option value="misconduct">Misconduct / ref abuse</option><option value="altercation">Altercation</option><option value="season">Banned for the rest of the season</option><option value="ban">League ban</option><option value="red">Red card (no card on sheet)</option><option value="other">Other</option></select>
     <input class="sel" id="su-n" type="number" min="0" max="50" inputmode="numeric" placeholder="Games" style="width:90px" aria-label="Games"></div>
-    <select class="sel" id="su-f" aria-label="Incident match"><option value="">No match: ban starts from the next game</option>${FX.filter(played).sort((a,b) => b.date - a.date).slice(0, 30).map(f => `<option value="${f.id}">${fmtDay(f.date)} · ${esc(T[f.home].short)} v ${esc(T[f.away].short)}</option>`).join('')}</select>
+    <select class="sel" id="su-f" aria-label="Incident match"><option value="">No match: starts from the next game</option>${matches}</select>
     <input class="sel" id="su-note" maxlength="120" placeholder="Short public note (optional)">
-    <button class="btn" data-act="su-add">Add ban</button></div></section>`;
+    <div class="row"><input class="sel" id="su-fine" type="number" min="0" step="5" inputmode="decimal" placeholder="Fine $ (optional)" style="flex:1" aria-label="Fine amount"></div>
+    <div class="row"><button class="btn" data-act="su-add">Add ban</button><button class="btn ghost" data-act="fi-add">Add fine only</button></div></div></section>`;
 }
 async function saveSheet(el) {
   const S = ADM.sheet, f = FX.find(x => x.id === S.fid);
@@ -659,12 +685,22 @@ async function act(a, v, el) {
     ADM.armed = null; const r = await sb.from('media').delete().eq('id', v); if (r.error) { toast(r.error.message); return; }
     toast('Removed'); await refresh(); return;
   }
-  else if (a === 'su-add') {
-    const [t, p] = ($('#su-p').value || '|').split('|'), n = $('#su-n').value;
+  else if (a === 'su-add' || a === 'fi-add') {
+    const [t, p] = ($('#su-p').value || '|').split('|'), n = $('#su-n').value, amt = $('#su-fine').value, fx = $('#su-f').value || null, r0 = $('#su-r').value;
     if (!p) { toast('Choose a player'); return; }
+    if (a === 'fi-add' && !(+amt > 0)) { toast('Enter the fine amount'); return; }
     el.disabled = true;
-    const r = await sb.from('suspensions').insert({season_id: SEASON.id, player_id: p, team_id: t, fixture_id: $('#su-f').value || null, games: n === '' ? null : Math.max(0, parseInt(n, 10)), reason: $('#su-r').value, note: $('#su-note').value.trim() || null});
-    if (r.error) { toast(r.error.message); el.disabled = false; return; } toast('Ban added'); await refresh(); return;
+    if (a === 'su-add') { const r = await sb.from('suspensions').insert({season_id: SEASON.id, player_id: p, team_id: t, fixture_id: fx, games: r0 === 'season' || n === '' ? null : Math.max(0, parseInt(n, 10)), reason: r0, note: $('#su-note').value.trim() || null});
+      if (r.error) { toast(r.error.message); el.disabled = false; return; } }
+    if (+amt > 0) { const r = await sb.from('fines').insert({season_id: SEASON.id, player_id: p, team_id: t, fixture_id: fx, amount: +amt, reason: r0 === 'red' ? 'red' : r0 === 'other' ? 'other' : 'misconduct'});
+      if (r.error) { toast(r.error.message); el.disabled = false; return; } }
+    toast(a === 'su-add' ? 'Ban added' : 'Fine added'); await refresh(); return;
+  }
+  else if (a === 'fi-set') {
+    const [i, st] = v.split(':'), x = ADM.su[+i], f = x.fine;
+    const r = f.id ? await sb.from('fines').update({status: st, updated_at: new Date().toISOString()}).eq('id', f.id)
+      : await sb.from('fines').insert({season_id: SEASON.id, player_id: x.p, team_id: x.t, fixture_id: x.f.id, amount: f.amount, reason: 'red', status: st});
+    if (r.error) { toast(r.error.message); return; } toast(st === 'paid' ? 'Fine marked paid' : st === 'waived' ? 'Fine waived' : 'Marked unpaid'); await refresh(); return;
   }
   else if (a === 'su-set') {
     const x = ADM.su[+v], n = $('#su-g-' + v).value, games = n === '' ? null : Math.max(0, parseInt(n, 10));
