@@ -306,6 +306,24 @@ button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inhe
 .ticks{list-style:none;margin:0;display:flex;flex-direction:column;gap:8px}
 .ticks li{padding-left:22px;position:relative}
 .ticks li::before{content:'✓';position:absolute;left:0;color:var(--accent);font-weight:800}
+.fx.live{background:linear-gradient(90deg,rgba(229,72,77,.10),rgba(229,72,77,.03));box-shadow:inset 3px 0 0 #e5484d,inset 0 0 0 1px rgba(229,72,77,.35)}
+.tag.live{background:rgba(229,72,77,.12);color:#d93a40;display:inline-flex;align-items:center;gap:6px}
+.pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:#e5484d;margin-left:6px;vertical-align:1px;box-shadow:0 0 0 0 rgba(229,72,77,.5);animation:pulse 1.8s ease-out infinite}
+.tag.live .pulse,h2 .pulse,p .pulse{margin-left:0}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(229,72,77,.55)}70%{box-shadow:0 0 0 7px rgba(229,72,77,0)}100%{box-shadow:0 0 0 0 rgba(229,72,77,0)}}
+tr.playing td{background:rgba(229,72,77,.07)}
+tr.playing td:first-child{box-shadow:inset 3px 0 0 #e5484d}
+.chip.now:not(.on){border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+.chip.now.on{box-shadow:0 0 0 2px var(--accent-bg)}
+.reps .rp{display:flex;align-items:center;gap:10px;padding:12px}
+.reps .rp span{display:flex;flex-direction:column;min-width:0}
+.reps .rp .dotc{flex:none}
+#app.enter>*{animation:rise .28s ease-out both}
+#app.enter>*:nth-child(2){animation-delay:.04s}#app.enter>*:nth-child(3){animation-delay:.08s}#app.enter>*:nth-child(n+4){animation-delay:.12s}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.fx,.card{transition:transform .12s ease,background-color .2s}
+a.fx:active,a.card:active{transform:scale(.985)}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}#app.enter>*{animation:none}.fx,.card{transition:none}}
 </style>
 
 </head>
@@ -333,8 +351,8 @@ button.ph{border:0;padding:0;cursor:pointer;text-align:left;width:100%;font:inhe
 <div id="toast" class="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202611070105"></script>
+<script src="config.js?v=202611070200"></script>
 <script>document.addEventListener('contextmenu', e => { if (e.target.closest('.ph, .viewer')) e.preventDefault(); });</script>
-<script src="app.js?v=202611070105"></script>
+<script src="app.js?v=202611070200"></script>
 </body>
 </html>

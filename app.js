@@ -110,7 +110,12 @@ const fmtLong = d => d.toLocaleDateString('en-CA', {weekday:'long', month:'long'
 const fmtTime = d => d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/Vancouver'});
 const pname = id => !id || !P[id] ? '<span class="hid">Unknown</span>' : P[id].hidden ? '<span class="hid">Name hidden</span>' : esc(P[id].name);
 const ord = n => n + (['th','st','nd','rd'][(n % 100 - 20) % 10] || ['th','st','nd','rd'][n % 100] || 'th');
-const curWeek = () => { const n = FX.filter(f => !played(f) && f.stage === 'regular').sort((a,b) => a.date - b.date)[0]; return n ? n.week : 20; };
+const GAME_MS = 80 * 6e4;
+const isLive = f => f.status === 'scheduled' && f.date <= new Date() && new Date() - f.date < GAME_MS;
+const liveTeams = () => new Set(FX.filter(isLive).flatMap(f => [f.home, f.away]));
+// Current week: a week with a game today (so it stays put during and after tonight's games), else the next unplayed week.
+const curWeek = () => { const today = FX.find(f => f.week && f.stage === 'regular' && vKey(f.date) === vKey(new Date())); if (today) return today.week;
+  const n = FX.filter(f => !played(f) && f.stage === 'regular').sort((a,b) => a.date - b.date)[0]; return n ? n.week : 20; };
 const lastWeek = () => Math.max(0, ...FX.filter(f => f.status === 'final').map(f => f.week || 0));
 const vKey = d => d.toLocaleDateString('en-CA', {timeZone:'America/Vancouver'});
 function dayLabel(d) {
@@ -126,12 +131,13 @@ const tname = t => T[t] ? esc(T[t].name) : 'TBD';
 function pill(f) {
   if (f.status === 'final') return '<span class="tag final">Final</span>';
   if (f.status === 'postponed') return '<span class="tag loss">Postponed</span>';
+  if (isLive(f)) return '<span class="tag live"><i class="pulse"></i>Live · result after full time</span>';
   if (played(f)) return '<span class="tag pend">Result pending</span>';
   return '<span class="tag">Upcoming</span>';
 }
 function fxRow(f, showDay = true) {
   const mid = f.status === 'final' ? `<b class="sc">${f.hs}<i>–</i>${f.as}</b>` : `<span class="ko">${fmtTime(f.date)}</span>`;
-  return `<a class="fx" href="#match-${f.code}"><span class="fx-team h"><span class="nm">${tname(f.home)}</span>${crest(f.home)}</span>${mid}<span class="fx-team">${crest(f.away)}<span class="nm">${tname(f.away)}</span></span>
+  return `<a class="fx${isLive(f) ? ' live' : ''}" href="#match-${f.code}"><span class="fx-team h"><span class="nm">${tname(f.home)}</span>${crest(f.home)}</span>${mid}<span class="fx-team">${crest(f.away)}<span class="nm">${tname(f.away)}</span></span>
   <span class="fx-meta">${showDay ? `<span>${fmtDay(f.date)}</span>` : ''}${f.week ? `<span>Wk ${f.week}</span>` : ''}${pill(f)}</span></a>`;
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2800); }
@@ -168,6 +174,7 @@ function matchLineups(f) {
   <svg viewBox="0 0 300 600" role="img" aria-label="Lineups">${pitchLines(600)}${top}${bot}</svg>
   <a class="lu-h" href="#team-${T[f.away].slug}">${crest(f.away)}<b>${tname(f.away)}</b><span class="tag">${esc(T[f.away].formation)}</span></a></div>
   <h3>Subs</h3><div class="goals">${restList(f.home, H.rest, m)}${restList(f.away, A.rest, m)}</div>
+  ${T[f.home].rep || T[f.away].rep ? `<h3>Team reps</h3><div class="goals reps">${[f.home, f.away].map(t => `<div class="card rp"><span class="dotc" style="background:${T[t].c1}"></span><span><b class="nm">${T[t].rep ? esc(T[t].rep) : '<span class="hid">To confirm</span>'}</b><small class="muted">${tname(t)}</small></span></div>`).join('')}</div>` : ''}
   <p class="small muted">⚽ scored, 👟 assisted. Lineups show each team's usual formation.</p></section>`;
 }
 // Last 5: oldest on the left, newest on the right; unplayed slots stay as empty circles.
@@ -176,8 +183,9 @@ function formDots(form) {
   return `<span class="l5" aria-label="Last 5: ${last.map(x => word[x]).join(', ') || 'no games yet'}">${'<i class="fm E"></i>'.repeat(pad)}${last.map(x => `<i class="fm ${x}">${sym[x]}</i>`).join('')}</span>`;
 }
 function tableHTML(rows, mini) {
+  const lv = liveTeams();
   return `<div class="tbl"><table><thead><tr><th class="pos">#</th><th class="tm">Team</th><th>GP</th>${mini ? '' : '<th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th>'}<th>GD</th><th>Pts</th>${mini ? '' : '<th>Last 5</th>'}</tr></thead><tbody>
-  ${rows.map((r,i) => `<tr><td class="pos">${i+1}</td><td class="tm"><a href="#team-${T[r.t].slug}">${crest(r.t)}<span class="nm">${tname(r.t)}</span></a></td><td>${r.gp}</td>
+  ${rows.map((r,i) => `<tr${lv.has(r.t) ? ' class="playing"' : ''}><td class="pos">${i+1}</td><td class="tm"><a href="#team-${T[r.t].slug}">${crest(r.t)}<span class="nm">${tname(r.t)}</span>${lv.has(r.t) ? '<i class="pulse" title="Playing now" aria-label="Playing now"></i>' : ''}</a></td><td>${r.gp}</td>
   ${mini ? '' : `<td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}</td><td>${r.ga}</td>`}<td>${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="pts">${r.pts}</td>
   ${mini ? '' : `<td>${formDots(r.form)}</td>`}</tr>`).join('')}
   </tbody></table></div>`;
@@ -199,13 +207,15 @@ V.home = () => {
     const nx = fx.filter(f => !played(f) && f.status !== 'postponed').sort((a,b) => a.date - b.date)[0], ls = fx.filter(f => f.status === 'final').sort((a,b) => b.date - a.date)[0];
     return `<section class="sec"><div class="sec-head"><h2>${tname(MYTEAM)}</h2><a href="#team-${T[MYTEAM].slug}">Team page →</a></div><div class="fxlist">${nx ? fxRow(nx) : ''}${ls ? fxRow(ls) : ''}</div></section>`; })() : '';
   const label = day ? dayLabel(day.date) : '';
+  const live = FX.filter(isLive);
   return `
+  ${live.length ? `<section class="sec"><div class="sec-head"><h2 class="row" style="gap:8px"><i class="pulse"></i>Playing now</h2><a href="#table">Live table →</a></div><div class="fxlist">${live.map(f => fxRow(f, false)).join('')}</div></section>` : ''}
   <section class="hero">${day ? `<p class="k">Matchday ${day.week || ''} · ${fmtDay(day.date)} · ${esc(LEAGUE.venue || '')}</p><h1>${label}${label.endsWith('night') || label === 'Tonight' ? "'s games" : label.includes(',') ? '' : "'s games"}</h1>` : `<h1>${esc(LEAGUE.name)}</h1>`}</section>
   ${nd.length ? `<div class="fxlist">${nd.map(f => fxRow(f, false)).join('')}</div>` : ''}
   ${mt}
   <section class="sec"><div class="sec-head"><h2>${lw ? `Week ${lw} results` : 'Latest results'}</h2><a href="#fixtures">All fixtures →</a></div>
     ${latest.length ? `<div class="fxlist">${latest.map(f => fxRow(f)).join('')}</div>` : empty('No games played yet.')}</section>
-  <section class="sec"><div class="sec-head"><h2>Table</h2><a href="#table">Full table →</a></div>${tableHTML(table().slice(0, 4), true)}</section>
+  <section class="sec"><div class="sec-head"><h2>Table</h2><a href="#table">Full table →</a></div>${tableHTML(table().slice(0, 4), true)}${liveTeams().size ? '<p class="small muted"><i class="pulse"></i> Teams playing now. The table updates once the result is in.</p>' : ''}</section>
   ${MEDIA.some(x => x.kind === 'photo') ? `<section class="sec"><div class="sec-head"><h2>Latest photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${MEDIA.filter(x => x.kind === 'photo').slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><div class="sec-head"><h2>Leaders</h2><a href="#stats">All stats →</a></div>
     <div class="lead2">${ld('Top scorer', g ? g.g : 0, g)}${ld('Most assists', a ? a.a : 0, a)}</div></section>
@@ -235,17 +245,18 @@ V.fixtures = () => {
       <p><b>Final · Mar 27.</b> Winners of P2, plus a match between the P2 losers.</p><a href="#table">See the current playoff picture →</a></div>`;
   } else {
     const g = {}; FX.filter(f => f.week === fxWeek).sort((a,b) => a.date - b.date).forEach(f => { const k = fmtLong(f.date); (g[k] = g[k] || []).push(f); });
-    body = Object.entries(g).map(([k, fs]) => `<div class="fxlist"><p class="day">${k}</p>${fs.map(f => fxRow(f, false)).join('')}</div>`).join('') || empty('No fixtures this week.');
+    body = (fxWeek !== curWeek() ? `<button class="btn ghost sm" data-act="week" data-v="${curWeek()}" style="margin-bottom:10px">↩ Back to this week (Wk ${curWeek()})</button>` : '') + Object.entries(g).map(([k, fs]) => `<div class="fxlist"><p class="day">${k}</p>${fs.map(f => fxRow(f, false)).join('')}</div>`).join('') || empty('No fixtures this week.');
   }
   return `<section class="sec"><h1>Fixtures</h1>
   <select class="sel" id="fx-team" data-act="fxteam" aria-label="Filter by team">${opts}</select>
-  ${fxTeam === 'all' ? `<div class="chips" id="wk-chips">${weeks.map(w => `<button class="chip ${fxWeek === w ? 'on' : ''}" data-act="week" data-v="${w}">Wk ${w}</button>`).join('')}<button class="chip ${fxWeek === 'PO' ? 'on' : ''}" data-act="week" data-v="PO">Playoffs</button></div>` : ''}
+  ${fxTeam === 'all' ? `<div class="chips" id="wk-chips">${(() => { const cw = curWeek(); return weeks.map(w => `<button class="chip ${fxWeek === w ? 'on' : ''} ${w === cw ? 'now' : ''}" data-act="week" data-v="${w}" ${w === cw ? 'aria-current="date" title="This week"' : ''}>Wk ${w}</button>`).join(''); })()}<button class="chip ${fxWeek === 'PO' ? 'on' : ''}" data-act="week" data-v="PO">Playoffs</button></div>` : ''}
   ${body}</section>`;
 };
 V.table = () => {
   const tb = table(), n = tb.length;
   const pairs = n >= 8 ? [[0,7],[1,6],[2,5],[3,4]] : [];
   return `<section class="sec"><h1>Table</h1>${tableHTML(tb, false)}
+  ${liveTeams().size ? '<p class="small muted"><i class="pulse"></i> Highlighted teams are playing now. Points update once the result is in.</p>' : ''}
   <p class="small muted">${SEASON.points_win} points for a win, ${SEASON.points_draw} for a draw. Ties split by goal difference, then goals for, then head-to-head.</p></section>
   ${pairs.length ? `<section class="sec"><h2>Playoff picture</h2>
   <p class="small muted">All 8 teams make the playoffs, so the table decides the matchups. If the season ended today:</p>
@@ -608,7 +619,7 @@ function render(top) {
   else if (h.startsWith('match-')) { html = V.match(h.slice(6)); nav = 'fixtures'; }
   else if (V[h]) { html = V[h](); nav = ['home','fixtures','table','stats'].includes(h) ? h : 'more'; }
   else html = notFound();
-  $('#app').innerHTML = html;
+  $('#app').classList.toggle('enter', !!top); $('#app').innerHTML = html;
   document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('on', a.dataset.nav === nav));
   if (top) window.scrollTo(0, 0);
   const on = document.querySelector('#wk-chips .chip.on'); if (on) { const c = on.parentElement; c.scrollLeft = on.offsetLeft - c.clientWidth / 2 + on.clientWidth / 2; }
@@ -736,6 +747,15 @@ document.addEventListener('submit', async e => {
   ADM.err = r.error ? 'Wrong email or password.' : ''; ADM.loaded = false; await admLoad();
 });
 window.addEventListener('hashchange', () => render(true));
+// While games are on: redraw every minute (live glow on/off) and fetch new results every 3 minutes.
+let lastLoad = Date.now();
+setInterval(async () => {
+  if (!sb || !SEASON || document.hidden) return;
+  const h = location.hash.slice(1); if (['admin', 'captain'].includes(h) || TOKEN || document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const today = FX.some(f => vKey(f.date) === vKey(new Date()) && f.date <= new Date());
+  if (today && Date.now() - lastLoad > 18e4) { try { await load(); lastLoad = Date.now(); } catch (e) { return; } }
+  if (today || FX.some(isLive)) { const y = window.scrollY; render(false); window.scrollTo(0, y); }
+}, 6e4);
 
 (async () => {
   if (!CFG.url || !CFG.key || !window.supabase) { $('#app').innerHTML = `<section class="sec"><h1>Almost ready</h1>${empty('The database connection is not set up yet.')}</section>`; return; }
