@@ -3,7 +3,7 @@ const CFG = window.LEAGUE_CONFIG || {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let sb = null;
-let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SUSP = [], FINE = [], SEASON = null, LEAGUE = null;
+let T = {}, TIDS = [], SLUG = {}, P = {}, SQUAD = {}, FX = [], FXI = {}, SPONSORS = [], MEDIA = [], SUSP = [], FINE = [], NEWS = [], SEASON = null, LEAGUE = null;
 
 /* ---------- data ---------- */
 async function load() {
@@ -20,14 +20,15 @@ async function load() {
   t.data.forEach(x => { T[x.id] = {id:x.id, slug:x.slug, name:x.name, short:x.short_name, c1:x.color_primary||'#6b7280', c2:x.color_secondary||'#d1d5db', todo:!x.colors_confirmed, rep:x.rep_name, email:x.rep_email, formation:x.formation, badge:x.badge_url}; SLUG[x.slug] = x.id; });
   TIDS = Object.keys(T);
   const fids = f.data.map(x => x.id);
-  const [p, g, sp, md, cd, su, fn] = await Promise.all([
+  const [p, g, sp, md, cd, su, fn, nw] = await Promise.all([
     sb.from('public_players').select('*').in('team_id', TIDS).eq('active', true).order('sort'),
     fids.length ? sb.from('goals').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('sponsors').select('*').eq('season_id', SEASON.id).order('sort'),
     sb.from('media').select('*').order('created_at', {ascending:false}).limit(300),
     fids.length ? sb.from('cards').select('*').in('fixture_id', fids) : {data:[]},
     sb.from('suspensions').select('*').eq('season_id', SEASON.id).order('created_at'),
-    sb.from('fines').select('*').eq('season_id', SEASON.id).order('created_at')
+    sb.from('fines').select('*').eq('season_id', SEASON.id).order('created_at'),
+    sb.from('news').select('*').eq('season_id', SEASON.id).order('created_at', {ascending:false}).limit(100)
   ]);
   P = {}; SQUAD = {}; TIDS.forEach(id => SQUAD[id] = []);
   (p.data||[]).forEach(x => { P[x.id] = {id:x.id, team:x.team_id, name:x.name, hidden:!x.name, pos:x.position||'', slot:x.lineup_slot, ph:!!x.is_placeholder}; SQUAD[x.team_id].push(x.id); });
@@ -36,7 +37,7 @@ async function load() {
   const byId = Object.fromEntries(FX.map(x => [x.id, x]));
   (g.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].goals.push({t:x.team_id, s:x.scorer_id, a:x.assist_id}));
   (cd.data||[]).forEach(x => byId[x.fixture_id] && byId[x.fixture_id].cards.push({t:x.team_id, p:x.player_id, c:x.color}));
-  SPONSORS = sp.data || []; MEDIA = md.data || []; SUSP = su.data || []; FINE = fn.data || [];
+  SPONSORS = sp.data || []; MEDIA = md.data || []; SUSP = su.data || []; FINE = fn.data || []; NEWS = nw.data || [];
 }
 
 /* ---------- league logic ---------- */
@@ -141,6 +142,10 @@ function fxRow(f, showDay = true) {
   <span class="fx-meta">${showDay ? `<span>${fmtDay(f.date)}</span>` : ''}${f.week ? `<span>Wk ${f.week}</span>` : ''}${pill(f)}</span></a>`;
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2800); }
+const BALL = `<svg class="ball-svg" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="#fff" stroke="currentColor" stroke-width="2"/><path d="M20 12l7 5-2.7 8h-8.6L13 17z" fill="currentColor"/><path d="M20 12V3.5M27 17l8-3M24.3 25l5 7M15.7 25l-5 7M13 17l-8-3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>`;
+const WHISTLE = `<svg class="whistle" viewBox="0 0 64 40" aria-hidden="true"><path d="M8 14h26a12 12 0 1 1-11.5 15.5L8 24a5 5 0 0 1 0-10z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><circle cx="34" cy="26" r="4" fill="currentColor"/><g class="tweet" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M50 8l5-4"/><path d="M53 15h7"/><path d="M50 22l5 4"/></g></svg>`;
+const loadingHTML = (msg = 'Warming up…') => `<div class="loader" role="status"><div class="pitch-line">${BALL}<span class="shadow"></span></div><p class="small muted">${msg}</p></div>`;
+const downHTML = (title, msg, retry = true) => `<div class="loader down" role="alert">${WHISTLE}<h2>${title}</h2><p class="small muted">${msg}</p>${retry ? '<button class="btn sm" onclick="location.reload()">Try again</button>' : ''}</div>`;
 const notFound = () => `<div class="sec"><h2>Page not found</h2><a href="#home">Back to home</a></div>`;
 const empty = msg => `<div class="card pad muted">${msg}</div>`;
 
@@ -191,8 +196,48 @@ function tableHTML(rows, mini) {
   </tbody></table></div>`;
 }
 
+/* ---------- news: written automatically from results and discipline, plus admin posts ---------- */
+const NTAG = {result: 'Result', player: 'Player', team: 'Team', discipline: 'Discipline', schedule: 'Schedule', league: 'League', sponsor: 'Partner'};
+const short = t => esc(T[t].name.replace(/ FC$/, ''));
+const named = id => id && P[id] && !P[id].hidden;
+function autoNews() {
+  const out = [], fin = FX.filter(f => f.status === 'final').sort((a,b) => a.date - b.date);
+  fin.forEach(f => { const [w, l, ws, ls] = f.hs >= f.as ? [f.home, f.away, f.hs, f.as] : [f.away, f.home, f.as, f.hs], m = ws - ls;
+    const title = m === 0 ? `${short(f.home)} and ${short(f.away)} share the points` : m >= 4 ? `${short(w)} run riot against ${short(l)}` : m === 1 ? `${short(w)} edge ${short(l)}` : `${short(w)} beat ${short(l)}`;
+    const gs = {}; f.goals.forEach(g => { if (named(g.s)) gs[g.s] = (gs[g.s] || 0) + 1; });
+    const top = Object.entries(gs).sort((a,b) => b[1] - a[1])[0];
+    out.push({d: f.date, tag: 'result', teams: [f.home, f.away], link: '#match-' + f.code, title: `${title}, ${ws}–${ls}`,
+      body: `Week ${f.week || ''}.${top && top[1] >= 2 ? ` ${esc(P[top[0]].name)} led the way with ${top[1]} goals.` : top ? ` Scorers: ${Object.keys(gs).map(p => esc(P[p].name)).join(', ')}.` : ''}`});
+    Object.entries(gs).filter(([, n]) => n >= 3).forEach(([p, n]) => out.push({d: new Date(f.date.getTime() + 1), tag: 'player', teams: [P[p].team], link: '#match-' + f.code,
+      title: `${n === 3 ? 'Hat-trick' : n + ' goals'} for ${esc(P[p].name)}`, body: `${esc(P[p].name)} scored ${n} for ${tname(P[p].team)} against ${tname(P[p].team === f.home ? f.away : f.home)}.`})); });
+  // form: scored in 3+ straight team games
+  Object.values(P).forEach(p => { if (p.hidden) return; const tf = fin.filter(f => f.home === p.team || f.away === p.team); let run = 0;
+    for (let i = tf.length - 1; i >= 0 && tf[i].goals.some(g => g.s === p.id); i--) run++;
+    if (run >= 3) out.push({d: new Date(tf[tf.length - 1].date.getTime() + 2), tag: 'player', teams: [p.team], link: '#stats', title: `${esc(p.name)} is on fire`, body: `Scored in ${run} straight games for ${tname(p.team)}.`}); });
+  // team runs: 3+ wins in a row, or 4+ unbeaten
+  TIDS.forEach(t => { const tf = fin.filter(f => f.home === t || f.away === t); const r = f => { const a = f.home === t ? f.hs : f.as, b = f.home === t ? f.as : f.hs; return a > b ? 'W' : a < b ? 'L' : 'D'; };
+    let w = 0, u = 0; for (let i = tf.length - 1; i >= 0 && r(tf[i]) === 'W'; i--) w++; for (let i = tf.length - 1; i >= 0 && r(tf[i]) !== 'L'; i--) u++;
+    if (w >= 3) out.push({d: new Date(tf[tf.length - 1].date.getTime() + 3), tag: 'team', teams: [t], link: '#team-' + T[t].slug, title: `${short(t)} make it ${w} wins in a row`, body: ''});
+    else if (u >= 4) out.push({d: new Date(tf[tf.length - 1].date.getTime() + 3), tag: 'team', teams: [t], link: '#team-' + T[t].slug, title: `${short(t)} unbeaten in ${u}`, body: ''}); });
+  // golden boot leader after the latest week
+  const L = leaders().filter(x => !P[x.id].hidden && x.g).sort((a,b) => b.g - a.g || b.a - a.a);
+  if (L.length && fin.length) out.push({d: new Date(fin[fin.length - 1].date.getTime() + 4), tag: 'player', teams: [P[L[0].id].team], link: '#stats', title: `${esc(P[L[0].id].name)} leads the Golden Boot race`, body: `${L[0].g} goal${L[0].g === 1 ? '' : 's'} after week ${lastWeek()}${L[1] ? `, ${L[0].g - L[1].g ? `${L[0].g - L[1].g} clear of ${esc(P[L[1].id].name)}` : `level with ${esc(P[L[1].id].name)}`}` : ''}.`});
+  FX.filter(f => f.status === 'postponed').forEach(f => out.push({d: f.date, tag: 'schedule', teams: [f.home, f.away], link: '#match-' + f.code, title: `${short(f.home)} v ${short(f.away)} postponed`, body: `The ${fmtDay(f.date)} game will be rescheduled.`}));
+  bans().filter(x => x.games !== 0 && named(x.p)).forEach(x => out.push({d: x.date, tag: 'discipline', teams: [x.t], link: '#suspensions',
+    title: `${esc(P[x.p].name)} ${x.kind === 'season' ? 'banned for the rest of the season' : x.games == null ? 'suspended until further notice' : `suspended for ${x.games} game${x.games === 1 ? '' : 's'}`}`, body: `${esc(x.why)} · ${tname(x.t)}.`}));
+  NEWS.forEach(n => out.push({d: new Date(n.created_at), tag: n.kind === 'sponsor' ? 'sponsor' : n.kind === 'schedule' ? 'schedule' : n.team_id ? 'team' : 'league', teams: n.team_id ? [n.team_id] : [], title: esc(n.title), body: esc(n.body || ''), pinned: n.pinned, id: n.id, own: true}));
+  return out.filter(x => x.d <= new Date() || x.own).sort((a,b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.d - a.d);
+}
+const ago = d => { const m = (Date.now() - d) / 6e4; return m < 60 ? 'Just now' : m < 1440 ? Math.floor(m / 60) + 'h ago' : m < 2880 ? 'Yesterday' : fmtDay(d); };
+const newsItem = n => `<${n.link ? `a href="${n.link}"` : 'div'} class="card news${n.pinned ? ' pin' : ''}"><span class="nmeta"><span class="tag ${n.tag === 'discipline' || n.tag === 'schedule' ? 'loss' : n.tag === 'result' ? 'final' : ''}">${n.pinned ? '📌 ' : ''}${NTAG[n.tag]}</span>${n.teams.slice(0, 2).map(t => crest(t)).join('')}<small class="muted">${ago(n.d)}</small></span><b>${n.title}</b>${n.body ? `<span class="small muted">${n.body}</span>` : ''}</${n.link ? 'a' : 'div'}>`;
 /* ---------- public views ---------- */
 const V = {};
+let newsTab = 'all';
+V.news = () => { const all = autoNews(), tabs = [['all','All'],['result','Results'],['player','Players'],['team','Teams'],['discipline','Discipline'],['league','League']];
+  const list = all.filter(n => newsTab === 'all' || n.tag === newsTab || (newsTab === 'league' && ['league','schedule','sponsor'].includes(n.tag))).slice(0, 40);
+  return `<section class="sec"><h1>News</h1><div class="chips">${tabs.map(([k, l]) => `<button class="chip ${newsTab === k ? 'on' : ''}" data-act="ntab" data-v="${k}">${l}</button>`).join('')}</div>
+  ${list.length ? `<div class="newslist">${list.map(newsItem).join('')}</div>` : empty('No news yet. Stories appear as results come in.')}</section>`; };
+
 V.home = () => {
   const next = FX.filter(f => f.status === 'scheduled' && !played(f)).sort((a,b) => a.date - b.date);
   const day = next[0], nd = day ? next.filter(f => vKey(f.date) === vKey(day.date)) : [];
@@ -215,6 +260,7 @@ V.home = () => {
   ${mt}
   <section class="sec"><div class="sec-head"><h2>${lw ? `Week ${lw} results` : 'Latest results'}</h2><a href="#fixtures">All fixtures →</a></div>
     ${latest.length ? `<div class="fxlist">${latest.map(f => fxRow(f)).join('')}</div>` : empty('No games played yet.')}</section>
+  ${(() => { const n = autoNews().slice(0, 3); return n.length ? `<section class="sec"><div class="sec-head"><h2>Latest news</h2><a href="#news">All news →</a></div><div class="newslist">${n.map(newsItem).join('')}</div></section>` : ''; })()}
   <section class="sec"><div class="sec-head"><h2>Table</h2><a href="#table">Full table →</a></div>${tableHTML(table().slice(0, 4), true)}${liveTeams().size ? '<p class="small muted"><i class="pulse"></i> Teams playing now. The table updates once the result is in.</p>' : ''}</section>
   ${MEDIA.some(x => x.kind === 'photo') ? `<section class="sec"><div class="sec-head"><h2>Latest photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${MEDIA.filter(x => x.kind === 'photo').slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><div class="sec-head"><h2>Leaders</h2><a href="#stats">All stats →</a></div>
@@ -323,6 +369,7 @@ V.team = slug => {
     <h3>Rest of squad</h3>${restList(id, rest, m)}` : (SQUAD[id].length ? restList(id, SQUAD[id], m) : empty('Squad coming soon. The team rep sends the names once and we keep them updated.'))}
     <p class="small muted">${SQUAD[id].some(p => P[p].ph) ? '<b>Sample names</b> until the team sends its roster. ' : ''}⚽ goals, 👟 assists this season. Any player can ask to hide their name.</p></section>
   ${outList(bans().filter(x => x.t === id && x.on), 'Unavailable')}
+  ${(() => { const n = autoNews().filter(x => x.teams.includes(id)).slice(0, 3); return n.length ? `<section class="sec"><div class="sec-head"><h2>Team news</h2><a href="#news">All news →</a></div><div class="newslist">${n.map(newsItem).join('')}</div></section>` : ''; })()}
   <section class="sec"><div class="sec-head"><h2>Next matches</h2><button class="btn ghost sm" data-act="ics" data-v="${id}">📅 Add to calendar</button></div>${up.length ? `<div class="fxlist">${up.map(f => fxRow(f)).join('')}</div>` : empty('Season finished.')}</section>
   ${teamMedia(id).length ? `<section class="sec"><div class="sec-head"><h2>Photos</h2><a href="#gallery">Gallery →</a></div><div class="gal">${teamMedia(id).slice(0, 4).map(mediaTile).join('')}</div></section>` : ''}
   <section class="sec"><h2>Results</h2>${res.length ? `<div class="fxlist">${res.map(f => fxRow(f)).join('')}</div>` : empty('No results yet.')}</section>`;
@@ -337,7 +384,7 @@ V.match = code => {
   const scorers = fin && (f.hs || f.as) ? `<div class="scorers"><ul class="h">${gl(f.home)}${missing(f.home) ? '<li class="hid">Scorers to come</li>' : ''}</ul><span class="ball" aria-label="Goals">⚽</span><ul>${gl(f.away)}${missing(f.away) ? '<li class="hid">Scorers to come</li>' : ''}</ul></div>` : '';
   const ph = MEDIA.filter(x => x.fixture_id === f.id);
   return `<section class="sec"><p class="k">${f.week ? `Week ${f.week} · ` : ''}${fmtDay(f.date)} · ${fmtTime(f.date)} · ${esc(LEAGUE.venue || '')}</p>
-  <div class="card board"><a class="side" href="#team-${T[f.home].slug}" style="color:inherit;text-decoration:none">${crest(f.home, 'lg')}<span class="nm">${tname(f.home)}</span></a>
+  <div class="card board tc" style="--h:${T[f.home].c1};--a:${T[f.away].c1}"><a class="side" href="#team-${T[f.home].slug}" style="color:inherit;text-decoration:none">${crest(f.home, 'lg')}<span class="nm">${tname(f.home)}</span></a>
     ${fin ? `<div class="big-sc">${f.hs}<span>–</span>${f.as}</div>` : `<div class="big-ko">${fmtTime(f.date)}</div>`}
     <a class="side" href="#team-${T[f.away].slug}" style="color:inherit;text-decoration:none">${crest(f.away, 'lg')}<span class="nm">${tname(f.away)}</span></a>${scorers}${cardsBlock}</div>
   <div class="row" style="justify-content:center">${pill(f)}${fin ? `<button class="btn sm" data-act="card" data-v="${f.code}">Share score card</button>` : ''}<button class="btn ghost sm" data-act="share" data-v="${f.code}">Share link</button></div></section>
@@ -407,6 +454,7 @@ V.info = () => `<section class="sec"><h1>League info</h1><div class="card pad" s
 V.more = () => `<section class="sec"><h1>More</h1><div class="more">
   <a class="card" href="#teams"><b>Teams</b><span>Squads, form and kits</span></a>
   <a class="card" href="#gallery"><b>Gallery</b><span>Match photos by KB Media</span></a>
+  <a class="card" href="#news"><b>News</b><span>Results, form, team and league news</span></a>
   <a class="card" href="#suspensions"><b>Suspensions</b><span>Who's out and when they're back</span></a>
   <a class="card" href="#partners"><b>Partners</b><span>Sponsor the league</span></a>
   <a class="card" href="#info"><b>League info</b><span>Times, format, privacy</span></a>
@@ -471,6 +519,15 @@ V.admin = () => {
   <section class="sec"><h2>Waiting for approval (${ADM.subs.length})</h2>${ADM.subs.length ? ADM.subs.map(subCard).join('') : empty('All caught up.')}</section>
   ${sheetHTML()}
   ${suspAdminHTML()}
+  <section class="sec"><h2>Post news</h2><p class="small muted">Results, hat-tricks, form, bans and postponements are written automatically. Post anything else here: announcements, schedule changes, new partners.</p>
+    <div class="card pad" style="display:flex;flex-direction:column;gap:10px">
+      <input class="sel" id="nw-t" maxlength="120" placeholder="Headline">
+      <textarea class="sel" id="nw-b" maxlength="1000" rows="3" placeholder="A few lines (optional)"></textarea>
+      <div class="row"><select class="sel" id="nw-k" style="flex:1" aria-label="Type"><option value="league">League news</option><option value="schedule">Schedule change</option><option value="sponsor">Partner news</option></select>
+      <select class="sel" id="nw-team" style="flex:1" aria-label="Team"><option value="">All teams</option>${TIDS.map(t => `<option value="${t}">${tname(t)}</option>`).join('')}</select></div>
+      <label class="row small" style="gap:8px"><input type="checkbox" id="nw-pin"> Pin to the top</label>
+      <button class="btn" data-act="nw-add">Post</button></div>
+    ${NEWS.length ? `<div class="card">${NEWS.slice(0, 8).map(n => `<div class="adm-fx"><span class="small">${n.pinned ? '📌 ' : ''}${esc(n.title)} <span class="muted">· ${fmtDay(new Date(n.created_at))}</span></span><button class="btn ghost sm" data-act="nw-pin" data-v="${n.id}">${n.pinned ? 'Unpin' : 'Pin'}</button><button class="btn ghost sm" data-act="nw-del" data-v="${n.id}">${ADM.armed === n.id ? 'Tap to confirm' : 'Delete'}</button></div>`).join('')}</div>` : ''}</section>
   <section class="sec"><h2>Upcoming fixtures</h2><div class="card">${upcoming.map(f => `<div class="adm-fx"><span><b>${esc(T[f.home].short)} v ${esc(T[f.away].short)}</b> <span class="muted">· ${fmtDay(f.date)} ${fmtTime(f.date)}</span> ${f.status === 'postponed' ? '<span class="tag loss">Postponed</span>' : ''}</span>
     <button class="btn ghost sm" data-act="postpone" data-v="${f.id}">${f.status === 'postponed' ? 'Restore' : 'Postpone'}</button></div>`).join('') || '<p class="pad muted">None.</p>'}</div></section>
   <section class="sec"><h2>Photos & highlights</h2><p class="small muted">Only post photos of players who agreed. Big photos are shrunk before upload.</p>
@@ -648,6 +705,7 @@ async function act(a, v, el) {
     if (navigator.share) { navigator.share({title: text, text, url}).catch(() => {}); } else { try { navigator.clipboard.writeText(text + ' ' + url).then(() => toast('Link copied')); } catch (e) {} } return; }
   if (a === 'week') fxWeek = v === 'PO' ? 'PO' : +v;
   else if (a === 'stat') statTab = v;
+  else if (a === 'ntab') newsTab = v;
   else if (a === 'cap-fx') { CAP.fid = v; CAP.hs = 0; CAP.as = 0; CAP.sc = []; }
   else if (a === 'cap-step') { const [k, d] = v.split(':'); CAP[k] = Math.max(0, Math.min(30, CAP[k] + (+d))); }
   else if (a === 'cap-again') { CAP = {ctx:null, err:null, fid:null, hs:0, as:0, sc:[], done:false, busy:false}; render(true); return; }
@@ -707,6 +765,17 @@ async function act(a, v, el) {
       if (r.error) { toast(r.error.message); el.disabled = false; return; } }
     toast(a === 'su-add' ? 'Ban added' : 'Fine added'); await refresh(); return;
   }
+  else if (a === 'nw-add') {
+    const title = $('#nw-t').value.trim(); if (title.length < 3) { toast('Add a headline'); return; }
+    el.disabled = true; const team = $('#nw-team').value || null;
+    const r = await sb.from('news').insert({season_id: SEASON.id, title, body: $('#nw-b').value.trim() || null, kind: team && $('#nw-k').value === 'league' ? 'team' : $('#nw-k').value, team_id: team, pinned: $('#nw-pin').checked});
+    if (r.error) { toast(r.error.message); el.disabled = false; return; } toast('Posted'); await refresh(); return;
+  }
+  else if (a === 'nw-pin') { const n = NEWS.find(x => x.id === v); const r = await sb.from('news').update({pinned: !n.pinned}).eq('id', v); if (r.error) { toast(r.error.message); return; } await refresh(); return; }
+  else if (a === 'nw-del') {
+    if (ADM.armed !== v) { ADM.armed = v; render(false); return; }
+    ADM.armed = null; const r = await sb.from('news').delete().eq('id', v); if (r.error) { toast(r.error.message); return; } toast('Deleted'); await refresh(); return;
+  }
   else if (a === 'fi-set') {
     const [i, st] = v.split(':'), x = ADM.su[+i], f = x.fine;
     const r = f.id ? await sb.from('fines').update({status: st, updated_at: new Date().toISOString()}).eq('id', f.id)
@@ -747,6 +816,13 @@ document.addEventListener('submit', async e => {
   ADM.err = r.error ? 'Wrong email or password.' : ''; ADM.loaded = false; await admLoad();
 });
 window.addEventListener('hashchange', () => render(true));
+// Swipe left/right on Fixtures to change week.
+let sx = null, sy = 0;
+document.addEventListener('touchstart', e => { sx = location.hash === '#fixtures' && fxTeam === 'all' && !e.target.closest('.chips, select') ? e.touches[0].clientX : null; sy = e.touches[0].clientY; }, {passive: true});
+document.addEventListener('touchend', e => { if (sx === null) return; const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = null;
+  if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * .6) return;
+  const weeks = [...new Set(FX.filter(f => f.week).map(f => f.week))].sort((a,b) => a - b), i = weeks.indexOf(fxWeek), n = weeks[i + (dx < 0 ? 1 : -1)];
+  if (n === undefined) return; fxWeek = n; render(false); const a = $('#app'); a.classList.remove('sl', 'sr'); void a.offsetWidth; a.classList.add(dx < 0 ? 'sl' : 'sr'); }, {passive: true});
 // While games are on: redraw every minute (live glow on/off) and fetch new results every 3 minutes.
 let lastLoad = Date.now();
 setInterval(async () => {
@@ -758,8 +834,9 @@ setInterval(async () => {
 }, 6e4);
 
 (async () => {
-  if (!CFG.url || !CFG.key || !window.supabase) { $('#app').innerHTML = `<section class="sec"><h1>Almost ready</h1>${empty('The database connection is not set up yet.')}</section>`; return; }
+  if (!CFG.url || !CFG.key || !window.supabase) { if (CFG.url && !window.supabase) { $('#app').innerHTML = downHTML(navigator.onLine === false ? "You're offline" : 'Stoppage time', "We can't reach the league right now. It's usually back in a minute."); return; } $('#app').innerHTML = downHTML('Almost ready', 'The site is being set up. Check back soon.', false); return; }
   sb = window.supabase.createClient(CFG.url, CFG.key);
-  try { await load(); render(true); }
-  catch (err) { console.error(err); $('#app').innerHTML = `<section class="sec"><h1>Can't load the league</h1>${empty('Check your connection and refresh. If it keeps happening, tell the league admin.')}</section>`; }
+  const slow = setTimeout(() => { const l = document.querySelector('#app .loader p'); if (l) l.textContent = 'Still warming up… slow connection'; }, 6000);
+  try { await load(); clearTimeout(slow); render(true); }
+  catch (err) { clearTimeout(slow); console.error(err); $('#app').innerHTML = downHTML(navigator.onLine === false ? "You're offline" : 'Stoppage time', navigator.onLine === false ? 'Reconnect to see the latest scores.' : "We can't reach the league right now. It's usually back in a minute."); }
 })();
